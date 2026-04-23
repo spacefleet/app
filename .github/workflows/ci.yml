@@ -23,12 +23,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # ui/embed.go's //go:embed all:dist needs at least one file to match.
-      # The repo commits ui/dist/.gitkeep to keep the tree buildable without
-      # first running the UI build; create it defensively in case someone
-      # forgets.
+      # ui/embed.go's //go:embed all:dist needs at least one file to match,
+      # and TestSPAFallback reads index.html to serve the fallback response.
+      # Seed both so test-go stays decoupled from the UI build.
       - name: Seed embed directory
-        run: mkdir -p ui/dist && touch ui/dist/.gitkeep
+        run: |
+          mkdir -p ui/dist
+          touch ui/dist/.gitkeep
+          printf '<!doctype html><title>test</title>' > ui/dist/index.html
 
       - run: go vet ./...
       - run: go test ./...
