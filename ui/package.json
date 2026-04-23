@@ -1,0 +1,30 @@
+{
+  "name": "spacefleet-ui",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "gen:api": "openapi-typescript ../api/openapi.yaml -o ./src/api/schema.d.ts",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "@clerk/react": "^6.4.3",
+    "@tailwindcss/vite": "^4.2.4",
+    "openapi-fetch": "^0.12.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router": "^7.14.2",
+    "tailwindcss": "^4.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "openapi-typescript": "^7.4.4",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

@@ -1,0 +1,69 @@
+openapi: 3.0.3
+info:
+  title: Spacefleet API
+  version: 0.1.0
+  description: |
+    HTTP API for the Spacefleet app. Regenerate consumers whenever this file changes.
+servers:
+  - url: /
+paths:
+  /api/health:
+    get:
+      summary: Liveness probe
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /api/ping:
+    get:
+      summary: Echo a greeting
+      operationId: getPing
+      parameters:
+        - in: query
+          name: name
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Greeting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Greeting"
+        default:
+          $ref: "#/components/responses/Error"
+components:
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    Greeting:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

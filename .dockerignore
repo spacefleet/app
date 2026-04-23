@@ -1,0 +1,38 @@
+# Version control / CI / editor config
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# Claude Code
+.claude
+
+# Local env — secrets must come from the deployment environment, not the image
+.env
+.env.*.local
+*.local
+
+# Build outputs — the Dockerfile produces these fresh in its own stages
+bin
+tmp
+ui/dist
+ui/node_modules
+node_modules
+*.tsbuildinfo
+
+# Logs / test artifacts
+*.log
+*.out
+coverage.out
+coverage.html
+*.test
+
+# Things not needed in the build context
+Dockerfile
+.dockerignore
+README.md
+CLAUDE.md
+docker-compose.yml
+.air.toml
+Makefile
