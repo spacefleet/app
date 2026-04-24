@@ -4,10 +4,12 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
-# On PRs, new commits cancel older in-progress runs. On main, queue
-# everything so each merged commit produces a pushed image.
+# On PRs, new commits cancel older in-progress runs. On main and tags,
+# queue everything so each push produces its own test run (and each tag
+# produces its own pushed image).
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -55,6 +57,7 @@ jobs:
 
   docker:
     needs: [test-go, test-ui]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -77,9 +80,7 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # Only log in when we're going to push; PR builds run unauthenticated.
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -92,17 +93,17 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
             type=sha,format=long
-            type=raw,value=latest,enable={{is_default_branch}}
 
-      # push=true only on main — PRs still build (catching Dockerfile
-      # regressions before merge) but don't publish.
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
