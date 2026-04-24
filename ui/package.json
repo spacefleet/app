@@ -12,14 +12,19 @@
   },
   "dependencies": {
     "@clerk/react": "^6.4.3",
+    "@clerk/ui": "^1.6.5",
     "@tailwindcss/vite": "^4.2.4",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.11.0",
     "openapi-fetch": "^0.12.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router": "^7.14.2",
+    "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.4"
   },
   "devDependencies": {
+    "@types/node": "^25.6.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

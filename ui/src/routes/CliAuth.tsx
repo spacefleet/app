@@ -88,13 +88,13 @@ export function CliAuth() {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          className="mt-1 w-full border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           placeholder="e.g. my-laptop"
         />
       </label>
 
       {error && (
-        <p className="mt-3 rounded-md bg-red-50 p-2 text-sm text-red-700">
+        <p className="mt-3 bg-red-50 p-2 text-sm text-red-700">
           {error}
         </p>
       )}
@@ -103,14 +103,14 @@ export function CliAuth() {
         <button
           onClick={authorize}
           disabled={submitting || name.trim() === ""}
-          className="flex-1 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex-1 bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting ? "Authorizing…" : "Authorize"}
         </button>
         <button
           onClick={cancel}
           disabled={submitting}
-          className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
+          className="border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
         >
           Cancel
         </button>
@@ -122,7 +122,7 @@ export function CliAuth() {
 function Centered({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
-      <div className="w-full max-w-md rounded-lg bg-white p-8 shadow-sm ring-1 ring-gray-200">
+      <div className="w-full max-w-md bg-white p-8 shadow-sm ring-1 ring-gray-200">
         {children}
       </div>
     </div>

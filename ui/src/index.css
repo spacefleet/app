@@ -1,1 +1,47 @@
 @import "tailwindcss";
+
+/* Brand: sharp corners across the app. Override Tailwind's radius scale to
+   zero so every `rounded-*` utility (including those baked into shadcn/ui
+   generated components) resolves to a square corner. `rounded-full` keeps
+   working for circular avatars — it doesn't use this scale. */
+@theme {
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
+  --radius-4xl: 0;
+}
+
+/* Clerk's generated avatars are served as pre-rendered PNGs from
+   img.clerk.com with a purple gradient baked in. We can't recolor the
+   pixels, but we can grayscale them so the gradient reads as neutral
+   gray while keeping the initials legible. The img[src*=...] selector
+   targets the base64 prefix for `{"type":"default",...}` payloads so
+   uploaded user photos (different payload) pass through unchanged.
+   The selector depends on Clerk's internal DOM structure, which is
+   why `@clerk/ui` is pinned in main.tsx — see
+   https://clerk.com/docs/reference/components/versioning. The
+   avatarBox background is a fallback for the moment before the img
+   loads. */
+.cl-avatarBox {
+  background: linear-gradient(
+    to bottom right,
+    #9ca3af,
+    #4b5563
+  ) !important;
+}
+.cl-avatarBox img[src*="eyJ0eXBlIjoiZGVmYXVsdCI"] {
+  filter: grayscale(1);
+}
+
+/* Force flex centering on Clerk's UserButton — the default inline-block
+   layout reveals a vertical offset once avatars go square (circles hid it). */
+.cl-userButtonBox,
+.cl-userButtonTrigger {
+  display: flex !important;
+  align-items: center !important;
+}
+

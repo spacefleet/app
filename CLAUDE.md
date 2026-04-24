@@ -12,6 +12,12 @@ Spacefleet is a Go backend + React SPA that ship as a single binary. The Go prog
 - **Auth**: Clerk session JWTs. [lib/auth/middleware.go](lib/auth/middleware.go) verifies the `Authorization` header; `publicAPIPaths` in `routes.go` controls the bypass list (`/api/health` today). `RequireOrg` enforces that the session's active org slug matches the `/api/orgs/{slug}/...` segment — any new org-scoped routes must follow that URL shape to be protected automatically.
 - **Frontend**: Vite + React 18 + TS, React Router v7, Tailwind v4, Clerk React SDK. The typed API client lives in [ui/src/api/client.ts](ui/src/api/client.ts) and attaches a Clerk token via middleware (`ApiAuthBinder` wires `setAuthTokenProvider` once Clerk loads).
 
+## UI components
+
+shadcn/ui is welcome as a starting point for components when it saves boilerplate — the project is scaffolded for it: `@/*` alias, `cn()` in [ui/src/lib/utils.ts](ui/src/lib/utils.ts), `lucide-react` installed, and [ui/components.json](ui/components.json) configured. Add components with `cd ui && npx shadcn add <name>` (they land in `ui/src/components/ui/`). The first `shadcn add` will also inject the base CSS variables into [ui/src/index.css](ui/src/index.css). Feel free to adapt generated components to fit the design — they're owned code, not a library.
+
+**Brand: sharp corners, no border radius.** Every rectangular element renders with square corners. Don't add `rounded-*` classes to new components; the Tailwind radius scale is overridden to zero in [ui/src/index.css](ui/src/index.css) as a safety net (so shadcn-generated `rounded-md` silently resolves to 0), and Clerk's `borderRadius` variable is set to 0 in [ui/src/main.tsx](ui/src/main.tsx). `rounded-full` is still allowed — it doesn't use the radius scale, and circular avatars/status dots are fine.
+
 ## The OpenAPI contract is the source of truth
 
 [api/openapi.yaml](api/openapi.yaml) generates:

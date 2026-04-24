@@ -38,7 +38,7 @@ export function AccountTokens() {
       </p>
 
       {error && (
-        <p className="mt-4 rounded-md bg-red-50 p-3 text-sm text-red-700">
+        <p className="mt-4 bg-red-50 p-3 text-sm text-red-700">
           {error}
         </p>
       )}
@@ -51,7 +51,7 @@ export function AccountTokens() {
           to create one.
         </p>
       ) : (
-        <ul className="mt-6 divide-y divide-gray-200 rounded-md border border-gray-200">
+        <ul className="mt-6 divide-y divide-gray-200 border border-gray-200">
           {tokens.map((t) => (
             <li
               key={t.id}
@@ -76,7 +76,7 @@ export function AccountTokens() {
                 <button
                   onClick={() => revoke(t.id)}
                   disabled={busyId === t.id}
-                  className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
+                  className="border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
                 >
                   {busyId === t.id ? "Revoking…" : "Revoke"}
                 </button>
