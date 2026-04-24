@@ -38,6 +38,107 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cli/auth/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve a pending CLI login (browser-initiated)
+         * @description Called by the browser after the signed-in user confirms the CLI
+         *     approval screen. Records a PKCE challenge and a human-friendly
+         *     token name, returning a single-use exchange code that the browser
+         *     redirects back to the CLI's localhost callback.
+         */
+        post: operations["approveCliAuth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cli/auth/exchange": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exchange an approval code for a CLI token (public)
+         * @description Called server-to-server by the CLI. Trades a one-time code plus the
+         *     PKCE verifier for a long-lived bearer token. This endpoint is public
+         *     because the CLI has no session yet when it calls it.
+         */
+        post: operations["exchangeCliAuth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cli/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the caller's CLI tokens */
+        get: operations["listCliTokens"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cli/tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a CLI token */
+        delete: operations["revokeCliToken"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cli/whoami": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return the user associated with the CLI token
+         * @description Smoke-test endpoint for the CLI — confirms a token is valid and
+         *     reports whose identity it carries. Clerk-authenticated calls also
+         *     work; they simply echo the Clerk session's user id.
+         */
+        get: operations["cliWhoami"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -52,6 +153,48 @@ export interface components {
         Error: {
             code: string;
             message: string;
+        };
+        CliApproveRequest: {
+            /** @description User-chosen label for the token (e.g. hostname). */
+            name: string;
+            /** @description Base64url(sha256(verifier)) — the CLI's PKCE challenge. */
+            challenge: string;
+        };
+        CliApproveResponse: {
+            /** @description Single-use exchange code, valid for ~5 minutes. */
+            code: string;
+        };
+        CliExchangeRequest: {
+            code: string;
+            verifier: string;
+        };
+        CliExchangeResponse: {
+            /** @description The bearer token. Returned exactly once — not recoverable later. */
+            token: string;
+            name: string;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        CliToken: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            /** Format: date-time */
+            revoked_at?: string | null;
+        };
+        CliTokenList: {
+            tokens: components["schemas"]["CliToken"][];
+        };
+        CliWhoami: {
+            user_id: string;
+            /** @enum {string} */
+            source: "clerk" | "cli";
         };
     };
     responses: {
@@ -110,6 +253,119 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Greeting"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    approveCliAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CliApproveRequest"];
+            };
+        };
+        responses: {
+            /** @description Approval recorded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CliApproveResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    exchangeCliAuth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CliExchangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Token issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CliExchangeResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listCliTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Token metadata (no plaintext) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CliTokenList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    revokeCliToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked (idempotent) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    cliWhoami: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Identity echo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CliWhoami"];
                 };
             };
             default: components["responses"]["Error"];

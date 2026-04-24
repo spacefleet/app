@@ -7,6 +7,8 @@ type Config struct {
 	Env                 string
 	ClerkPublishableKey string
 	ClerkSecretKey      string
+	DatabaseURL         string
+	RedisURL            string
 }
 
 func Load() *Config {
@@ -15,6 +17,8 @@ func Load() *Config {
 		Env:                 getenv("ENV", "development"),
 		ClerkPublishableKey: os.Getenv("CLERK_PUBLISHABLE_KEY"),
 		ClerkSecretKey:      os.Getenv("CLERK_SECRET_KEY"),
+		DatabaseURL:         os.Getenv("DATABASE_URL"),
+		RedisURL:            os.Getenv("REDIS_URL"),
 	}
 }
 

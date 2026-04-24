@@ -9,12 +9,18 @@ import (
 	"github.com/spacefleet/app/lib/config"
 )
 
-func TestHealthEndpointIsPublic(t *testing.T) {
-	srv := New(&config.Config{Addr: ":0", Env: "test"})
+// handler builds the HTTP tree without a real Postgres/Redis. The tests
+// below only exercise routes that don't touch either — health is public,
+// /api/ping hits the auth middleware and should reject before any handler
+// runs, and the SPA fallback is entirely static.
+func handler() http.Handler {
+	return buildHandler(&config.Config{Addr: ":0", Env: "test"}, nil)
+}
 
+func TestHealthEndpointIsPublic(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	handler().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -32,11 +38,9 @@ func TestHealthEndpointIsPublic(t *testing.T) {
 }
 
 func TestProtectedEndpointRejectsUnauthenticated(t *testing.T) {
-	srv := New(&config.Config{Addr: ":0", Env: "test"})
-
 	req := httptest.NewRequest(http.MethodGet, "/api/ping?name=crew", nil)
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	handler().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 without a session token, got %d", rec.Code)
@@ -44,11 +48,9 @@ func TestProtectedEndpointRejectsUnauthenticated(t *testing.T) {
 }
 
 func TestSPAFallback(t *testing.T) {
-	srv := New(&config.Config{Addr: ":0", Env: "test"})
-
 	req := httptest.NewRequest(http.MethodGet, "/some/spa/route", nil)
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, req)
+	handler().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)

@@ -16,11 +16,31 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/oapi-codegen/runtime"
 	strictnethttp "github.com/oapi-codegen/runtime/strictmiddleware/nethttp"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// Defines values for CliWhoamiSource.
+const (
+	Clerk CliWhoamiSource = "clerk"
+	Cli   CliWhoamiSource = "cli"
+)
+
+// Valid indicates whether the value is a known member of the CliWhoamiSource enum.
+func (e CliWhoamiSource) Valid() bool {
+	switch e {
+	case Clerk:
+		return true
+	case Cli:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for HealthStatus.
 const (
@@ -36,6 +56,60 @@ func (e HealthStatus) Valid() bool {
 		return false
 	}
 }
+
+// CliApproveRequest defines model for CliApproveRequest.
+type CliApproveRequest struct {
+	// Challenge Base64url(sha256(verifier)) — the CLI's PKCE challenge.
+	Challenge string `json:"challenge"`
+
+	// Name User-chosen label for the token (e.g. hostname).
+	Name string `json:"name"`
+}
+
+// CliApproveResponse defines model for CliApproveResponse.
+type CliApproveResponse struct {
+	// Code Single-use exchange code, valid for ~5 minutes.
+	Code string `json:"code"`
+}
+
+// CliExchangeRequest defines model for CliExchangeRequest.
+type CliExchangeRequest struct {
+	Code     string `json:"code"`
+	Verifier string `json:"verifier"`
+}
+
+// CliExchangeResponse defines model for CliExchangeResponse.
+type CliExchangeResponse struct {
+	ExpiresAt time.Time `json:"expires_at"`
+	Name      string    `json:"name"`
+
+	// Token The bearer token. Returned exactly once — not recoverable later.
+	Token string `json:"token"`
+}
+
+// CliToken defines model for CliToken.
+type CliToken struct {
+	CreatedAt  time.Time          `json:"created_at"`
+	ExpiresAt  time.Time          `json:"expires_at"`
+	Id         openapi_types.UUID `json:"id"`
+	LastUsedAt *time.Time         `json:"last_used_at,omitempty"`
+	Name       string             `json:"name"`
+	RevokedAt  *time.Time         `json:"revoked_at,omitempty"`
+}
+
+// CliTokenList defines model for CliTokenList.
+type CliTokenList struct {
+	Tokens []CliToken `json:"tokens"`
+}
+
+// CliWhoami defines model for CliWhoami.
+type CliWhoami struct {
+	Source CliWhoamiSource `json:"source"`
+	UserId string          `json:"user_id"`
+}
+
+// CliWhoamiSource defines model for CliWhoami.Source.
+type CliWhoamiSource string
 
 // Error defines model for Error.
 type Error struct {
@@ -61,8 +135,29 @@ type GetPingParams struct {
 	Name *string `form:"name,omitempty" json:"name,omitempty"`
 }
 
+// ApproveCliAuthJSONRequestBody defines body for ApproveCliAuth for application/json ContentType.
+type ApproveCliAuthJSONRequestBody = CliApproveRequest
+
+// ExchangeCliAuthJSONRequestBody defines body for ExchangeCliAuth for application/json ContentType.
+type ExchangeCliAuthJSONRequestBody = CliExchangeRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Approve a pending CLI login (browser-initiated)
+	// (POST /api/cli/auth/approve)
+	ApproveCliAuth(w http.ResponseWriter, r *http.Request)
+	// Exchange an approval code for a CLI token (public)
+	// (POST /api/cli/auth/exchange)
+	ExchangeCliAuth(w http.ResponseWriter, r *http.Request)
+	// List the caller's CLI tokens
+	// (GET /api/cli/tokens)
+	ListCliTokens(w http.ResponseWriter, r *http.Request)
+	// Revoke a CLI token
+	// (DELETE /api/cli/tokens/{id})
+	RevokeCliToken(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
+	// Return the user associated with the CLI token
+	// (GET /api/cli/whoami)
+	CliWhoami(w http.ResponseWriter, r *http.Request)
 	// Liveness probe
 	// (GET /api/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
@@ -79,6 +174,87 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ApproveCliAuth operation middleware
+func (siw *ServerInterfaceWrapper) ApproveCliAuth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApproveCliAuth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExchangeCliAuth operation middleware
+func (siw *ServerInterfaceWrapper) ExchangeCliAuth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExchangeCliAuth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListCliTokens operation middleware
+func (siw *ServerInterfaceWrapper) ListCliTokens(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCliTokens(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeCliToken operation middleware
+func (siw *ServerInterfaceWrapper) RevokeCliToken(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeCliToken(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CliWhoami operation middleware
+func (siw *ServerInterfaceWrapper) CliWhoami(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CliWhoami(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetHealth operation middleware
 func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Request) {
@@ -241,6 +417,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc("POST "+options.BaseURL+"/api/cli/auth/approve", wrapper.ApproveCliAuth)
+	m.HandleFunc("POST "+options.BaseURL+"/api/cli/auth/exchange", wrapper.ExchangeCliAuth)
+	m.HandleFunc("GET "+options.BaseURL+"/api/cli/tokens", wrapper.ListCliTokens)
+	m.HandleFunc("DELETE "+options.BaseURL+"/api/cli/tokens/{id}", wrapper.RevokeCliToken)
+	m.HandleFunc("GET "+options.BaseURL+"/api/cli/whoami", wrapper.CliWhoami)
 	m.HandleFunc("GET "+options.BaseURL+"/api/health", wrapper.GetHealth)
 	m.HandleFunc("GET "+options.BaseURL+"/api/ping", wrapper.GetPing)
 
@@ -248,6 +429,148 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 }
 
 type ErrorJSONResponse Error
+
+type ApproveCliAuthRequestObject struct {
+	Body *ApproveCliAuthJSONRequestBody
+}
+
+type ApproveCliAuthResponseObject interface {
+	VisitApproveCliAuthResponse(w http.ResponseWriter) error
+}
+
+type ApproveCliAuth200JSONResponse CliApproveResponse
+
+func (response ApproveCliAuth200JSONResponse) VisitApproveCliAuthResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ApproveCliAuthdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ApproveCliAuthdefaultJSONResponse) VisitApproveCliAuthResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type ExchangeCliAuthRequestObject struct {
+	Body *ExchangeCliAuthJSONRequestBody
+}
+
+type ExchangeCliAuthResponseObject interface {
+	VisitExchangeCliAuthResponse(w http.ResponseWriter) error
+}
+
+type ExchangeCliAuth200JSONResponse CliExchangeResponse
+
+func (response ExchangeCliAuth200JSONResponse) VisitExchangeCliAuthResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ExchangeCliAuthdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ExchangeCliAuthdefaultJSONResponse) VisitExchangeCliAuthResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type ListCliTokensRequestObject struct {
+}
+
+type ListCliTokensResponseObject interface {
+	VisitListCliTokensResponse(w http.ResponseWriter) error
+}
+
+type ListCliTokens200JSONResponse CliTokenList
+
+func (response ListCliTokens200JSONResponse) VisitListCliTokensResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListCliTokensdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListCliTokensdefaultJSONResponse) VisitListCliTokensResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type RevokeCliTokenRequestObject struct {
+	Id openapi_types.UUID `json:"id"`
+}
+
+type RevokeCliTokenResponseObject interface {
+	VisitRevokeCliTokenResponse(w http.ResponseWriter) error
+}
+
+type RevokeCliToken204Response struct {
+}
+
+func (response RevokeCliToken204Response) VisitRevokeCliTokenResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type RevokeCliTokendefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response RevokeCliTokendefaultJSONResponse) VisitRevokeCliTokenResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type CliWhoamiRequestObject struct {
+}
+
+type CliWhoamiResponseObject interface {
+	VisitCliWhoamiResponse(w http.ResponseWriter) error
+}
+
+type CliWhoami200JSONResponse CliWhoami
+
+func (response CliWhoami200JSONResponse) VisitCliWhoamiResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CliWhoamidefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response CliWhoamidefaultJSONResponse) VisitCliWhoamiResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
 
 type GetHealthRequestObject struct {
 }
@@ -296,6 +619,21 @@ func (response GetPingdefaultJSONResponse) VisitGetPingResponse(w http.ResponseW
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// Approve a pending CLI login (browser-initiated)
+	// (POST /api/cli/auth/approve)
+	ApproveCliAuth(ctx context.Context, request ApproveCliAuthRequestObject) (ApproveCliAuthResponseObject, error)
+	// Exchange an approval code for a CLI token (public)
+	// (POST /api/cli/auth/exchange)
+	ExchangeCliAuth(ctx context.Context, request ExchangeCliAuthRequestObject) (ExchangeCliAuthResponseObject, error)
+	// List the caller's CLI tokens
+	// (GET /api/cli/tokens)
+	ListCliTokens(ctx context.Context, request ListCliTokensRequestObject) (ListCliTokensResponseObject, error)
+	// Revoke a CLI token
+	// (DELETE /api/cli/tokens/{id})
+	RevokeCliToken(ctx context.Context, request RevokeCliTokenRequestObject) (RevokeCliTokenResponseObject, error)
+	// Return the user associated with the CLI token
+	// (GET /api/cli/whoami)
+	CliWhoami(ctx context.Context, request CliWhoamiRequestObject) (CliWhoamiResponseObject, error)
 	// Liveness probe
 	// (GET /api/health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
@@ -331,6 +669,142 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// ApproveCliAuth operation middleware
+func (sh *strictHandler) ApproveCliAuth(w http.ResponseWriter, r *http.Request) {
+	var request ApproveCliAuthRequestObject
+
+	var body ApproveCliAuthJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ApproveCliAuth(ctx, request.(ApproveCliAuthRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ApproveCliAuth")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ApproveCliAuthResponseObject); ok {
+		if err := validResponse.VisitApproveCliAuthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ExchangeCliAuth operation middleware
+func (sh *strictHandler) ExchangeCliAuth(w http.ResponseWriter, r *http.Request) {
+	var request ExchangeCliAuthRequestObject
+
+	var body ExchangeCliAuthJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ExchangeCliAuth(ctx, request.(ExchangeCliAuthRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ExchangeCliAuth")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ExchangeCliAuthResponseObject); ok {
+		if err := validResponse.VisitExchangeCliAuthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListCliTokens operation middleware
+func (sh *strictHandler) ListCliTokens(w http.ResponseWriter, r *http.Request) {
+	var request ListCliTokensRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListCliTokens(ctx, request.(ListCliTokensRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListCliTokens")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListCliTokensResponseObject); ok {
+		if err := validResponse.VisitListCliTokensResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RevokeCliToken operation middleware
+func (sh *strictHandler) RevokeCliToken(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	var request RevokeCliTokenRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RevokeCliToken(ctx, request.(RevokeCliTokenRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RevokeCliToken")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RevokeCliTokenResponseObject); ok {
+		if err := validResponse.VisitRevokeCliTokenResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CliWhoami operation middleware
+func (sh *strictHandler) CliWhoami(w http.ResponseWriter, r *http.Request) {
+	var request CliWhoamiRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CliWhoami(ctx, request.(CliWhoamiRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CliWhoami")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CliWhoamiResponseObject); ok {
+		if err := validResponse.VisitCliWhoamiResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // GetHealth operation middleware
@@ -386,16 +860,31 @@ func (sh *strictHandler) GetPing(w http.ResponseWriter, r *http.Request, params 
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"H4sIAAAAAAAC/7xX227bzBF+lcG2QGxAB/fP4UK9cowgMeoLI3HRizgIVuRI3Hi5y8wsZQuGij5En7BP",
+	"UswuSZ2o2Knt3lHi7hy++Wbm473KfFl5hy6wmtwrQq68Y4w/PhB5kofMu4AuyKOuKmsyHYx34x/snfzH",
+	"WYGllqc/E87URP1pvLY6Tm95nKytVquBypEzMpUYUZPkBlrPSg40d8TkmTWnVUV+gZ/xZ40co6jIV0jB",
+	"pDizQluLbo7yY9v2e8347k1N9ogL/cfbd0cLJDMzSMfH8J9//RtCgXB2cf6K4fJvZx+gszRSAxWWFaqJ",
+	"4kDGzdVqoJwue1z8nZGGWeEZHVg9RQszT9Fw8Dfo4AhH8xEUnoPcP+6xvBoowp+1IczV5GtyM9jI6lt3",
+	"w09/YBYklk1YGuD2cfF5T7xfjJtbHNaMgHdZod0cQU4OYKGtyWP0/3wLpXF1QH443OjlQIgfGgeHS9eE",
+	"uId1W6eel33+Ny48GMohuPCuMoT8Xcc4Z55KeVK5DjgMJtbkICX2XsTa74N/VSBMURNSYscIPmOoyWEO",
+	"eKezYJfgXYaRm84HIMz8AklPLYLVAenheiTPg5ZGG1kdQOaqDXWnNIQ6YP5bcPwvEJp862xdm7zvmNUc",
+	"vtf864Bcba1gpSaBavydehEu/M2TjO+UIWbRtvIaykcX5ML09UssbnwyAUt+aOZ21V11njSRXvaThg8F",
+	"9I/C69LsR8O+piziia4uYzNapBvJ2JoNY2uYa0b6nir+a/jag4PWSV9o3YJ65FApkVnP8dEzpT3f5/sj",
+	"IQa5u+f+0V5+Zf4TahuKHsiDDjVvQu5vepDe8dTc2nckB42b+f1J9enq6hJOL8+7bfal0hnOLGIAXVUy",
+	"uObokHSQ9eG4LpEYbgt0uJDpVhiGmbEIaezy6FqGUjBBGkhtGDu9PE/jm5Pjk9FfRicCga/Q6cqoiXo9",
+	"Ohm9VgNV6VDE3Me6MuPMmrGuQzHWaRFGsHzqmu1czmST5jBdxkSm5G8ZCfQsYEqNzdxhPjQOhHaSzsxQ",
+	"ya06uHbJg7bAGWGa2pmnnEHv6AbQLgcNRV1qN5yRQZfb5bVLSkCmwQAoDnzj5qCBD+xiCIUOm8FeO8Lc",
+	"EGaBYaqzGwh+Q7tYn2krCgMyba28T2gLcaJUO8/VRDV6QZRDHQqVGIIc3vt8+Wwqb1+urbbJKLMz/rEh",
+	"NP84OXmRADpFuac5T9uCUiwk5ioemenahkMeupA7KTtQXJelpuUaXdBQoculvGcX52D93Dg4aqo4NM4E",
+	"I6vgON7epnHLgAd5zEgLpGHww/TUEvvs4nwEV6RzFGJ6lzZXIlRl68jnaxcJ26ql2N0arHfzoTULaZIt",
+	"dXIlbYwur7xxAQxDVU+tya7dFDMttG38QqEZnAdGljaGJYY4C8AkTjKY0MfJVpW9OCl3lej/n5V7ArSH",
+	"lnFZg2Gun4GRrUPQDroBFsmQii5laz5RUlV3SLnWGnOMIWyXTgRKqy9YvSx2a0V0ELQSg8510HDkPFRW",
+	"GxfwLhw/GUXxGlkuNEZ6xWvcuA+v8b3JV6l1LQbcx+1zVJqdMpOtRrrEgMRq8vVeGclJNl2rHydJS26T",
+	"dbAB3gPaefVtrzhv9mdLCiuHI5NjWXkp29PBS0Y3ubYN2W0nLBuK7Xyqlv4GhwE5rGdQK0fEonwldcta",
+	"N2Q23HzIapfL2qw8BREmnhFMji6YsExjicggj+BMNOtQRrC8zGQ8NzNLW/bX7tbTzV/F5xLYlJVdAmZF",
+	"s37lajv0XnGSDybvm3RrGf2yrdI46emT8zZ5Cf8ZSisyJqIQs9bMPou7DW5NKLoa7VS96HRt71D5iKFR",
+	"vi+IUuOhB6IvSAuToXAoBbrcmwYLdMgMFfkprtOqmi+BQ0ldyvv+Vv9ZIy3Xvd58Mq4zebibnw+Z7qOm",
+	"B5v1u6fuJekeDfMtX0nJJFhqsmqixmr1bfXfAAAA//+p4Z2ZoBQAAA==",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

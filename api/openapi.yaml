@@ -37,6 +37,105 @@ paths:
                 $ref: "#/components/schemas/Greeting"
         default:
           $ref: "#/components/responses/Error"
+
+  /api/cli/auth/approve:
+    post:
+      summary: Approve a pending CLI login (browser-initiated)
+      description: |
+        Called by the browser after the signed-in user confirms the CLI
+        approval screen. Records a PKCE challenge and a human-friendly
+        token name, returning a single-use exchange code that the browser
+        redirects back to the CLI's localhost callback.
+      operationId: approveCliAuth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CliApproveRequest"
+      responses:
+        "200":
+          description: Approval recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliApproveResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/cli/auth/exchange:
+    post:
+      summary: Exchange an approval code for a CLI token (public)
+      description: |
+        Called server-to-server by the CLI. Trades a one-time code plus the
+        PKCE verifier for a long-lived bearer token. This endpoint is public
+        because the CLI has no session yet when it calls it.
+      operationId: exchangeCliAuth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CliExchangeRequest"
+      responses:
+        "200":
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliExchangeResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/cli/tokens:
+    get:
+      summary: List the caller's CLI tokens
+      operationId: listCliTokens
+      responses:
+        "200":
+          description: Token metadata (no plaintext)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliTokenList"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/cli/tokens/{id}:
+    delete:
+      summary: Revoke a CLI token
+      operationId: revokeCliToken
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Revoked (idempotent)
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/cli/whoami:
+    get:
+      summary: Return the user associated with the CLI token
+      description: |
+        Smoke-test endpoint for the CLI — confirms a token is valid and
+        reports whose identity it carries. Clerk-authenticated calls also
+        work; they simply echo the Clerk session's user id.
+      operationId: cliWhoami
+      responses:
+        "200":
+          description: Identity echo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliWhoami"
+        default:
+          $ref: "#/components/responses/Error"
+
 components:
   schemas:
     Health:
@@ -60,6 +159,91 @@ components:
           type: string
         message:
           type: string
+
+    CliApproveRequest:
+      type: object
+      required: [name, challenge]
+      properties:
+        name:
+          type: string
+          description: User-chosen label for the token (e.g. hostname).
+        challenge:
+          type: string
+          description: Base64url(sha256(verifier)) — the CLI's PKCE challenge.
+
+    CliApproveResponse:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          description: Single-use exchange code, valid for ~5 minutes.
+
+    CliExchangeRequest:
+      type: object
+      required: [code, verifier]
+      properties:
+        code:
+          type: string
+        verifier:
+          type: string
+
+    CliExchangeResponse:
+      type: object
+      required: [token, name, expires_at]
+      properties:
+        token:
+          type: string
+          description: The bearer token. Returned exactly once — not recoverable later.
+        name:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    CliToken:
+      type: object
+      required: [id, name, created_at, expires_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CliTokenList:
+      type: object
+      required: [tokens]
+      properties:
+        tokens:
+          type: array
+          items:
+            $ref: "#/components/schemas/CliToken"
+
+    CliWhoami:
+      type: object
+      required: [user_id, source]
+      properties:
+        user_id:
+          type: string
+        source:
+          type: string
+          enum: [clerk, cli]
+
   responses:
     Error:
       description: Error response

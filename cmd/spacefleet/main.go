@@ -19,8 +19,22 @@ func main() {
 	// .env is optional — in prod, env vars come from the deployment environment.
 	_ = godotenv.Load()
 
+	// Subcommand dispatch happens before we build the HTTP server so
+	// `spacefleet migrate` doesn't spin up Redis / a listener just to
+	// apply SQL.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "migrate":
+			runMigrate(os.Args[2:])
+			return
+		}
+	}
+
 	cfg := config.Load()
-	srv := server.New(cfg)
+	srv, err := server.New(cfg)
+	if err != nil {
+		log.Fatalf("server init: %v", err)
+	}
 
 	go func() {
 		log.Printf("listening on %s", cfg.Addr)

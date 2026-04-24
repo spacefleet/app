@@ -1,4 +1,4 @@
-.PHONY: run build test fmt vet tidy dev clean gen ui-install ui-dev ui-build services-up services-down services-logs services-reset
+.PHONY: run build test fmt vet tidy dev clean gen ui-install ui-dev ui-build services-up services-down services-logs services-reset migrate-up migrate-status
 
 BINARY := bin/spacefleet
 PKG    := ./cmd/spacefleet
@@ -22,10 +22,19 @@ vet:
 tidy:
 	go mod tidy
 
-# Regenerate Go server stubs and TS client types from api/openapi.yaml.
+# Regenerate the ent client, Go server stubs, and TS client types.
 gen:
+	go generate ./ent/...
 	go generate ./lib/api/...
 	cd ui && npm run gen:api
+
+# Apply pending migrations from db/migrations/ against $DATABASE_URL.
+migrate-up:
+	go run $(PKG) migrate up
+
+# Show applied vs pending migrations.
+migrate-status:
+	go run $(PKG) migrate status
 
 # Dev backend only. Run `make ui-dev` in a second terminal for the React dev server.
 dev:
