@@ -117,6 +117,113 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/orgs/{slug}/github/installations/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Begin a GitHub App install handshake
+         * @description Issues a one-time CSRF state and returns the URL the browser should
+         *     send the user to. After install, GitHub redirects back to the App's
+         *     configured setup URL with `installation_id` and `state`; the SPA
+         *     finishes the handshake via `/api/github/installations/complete`.
+         */
+        post: operations["startGithubInstall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/github/installations/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finalize a GitHub App install handshake (Clerk session only)
+         * @description Called by the SPA setup-callback page with the `state` and
+         *     `installation_id` returned from GitHub. Verifies the state, fetches
+         *     the installation from GitHub via App-level auth, and persists it
+         *     scoped to the org that started the handshake. Not org-prefixed
+         *     because the org is recovered from the state itself.
+         */
+        post: operations["completeGithubInstall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs/{slug}/github/installations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List GitHub App installations connected to this org */
+        get: operations["listGithubInstallations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs/{slug}/github/installations/{installationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect a GitHub App installation from this org
+         * @description Drops Spacefleet's record of the installation. Does not uninstall
+         *     the GitHub App on github.com — that's the user's choice.
+         */
+        delete: operations["deleteGithubInstallation"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs/{slug}/github/installations/{installationId}/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List repositories accessible to a GitHub App installation
+         * @description Mints a fresh installation access token and enumerates the repos
+         *     the App has been granted on. This is what the build pipeline will
+         *     clone from.
+         */
+        get: operations["listGithubInstallationRepositories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cli/whoami": {
         parameters: {
             query?: never;
@@ -196,6 +303,57 @@ export interface components {
             /** @enum {string} */
             source: "clerk" | "cli";
         };
+        GithubInstallStart: {
+            /**
+             * Format: uri
+             * @description Send the user here to install the App. State is embedded in the
+             *     URL; the caller does not need to track it.
+             */
+            url: string;
+        };
+        GithubInstallCompleteRequest: {
+            state: string;
+            /** Format: int64 */
+            installation_id: number;
+        };
+        GithubInstallCompleteResponse: {
+            installation: components["schemas"]["GithubInstallation"];
+            /** @description The org the installation was bound to. Use it to redirect. */
+            org_slug: string;
+        };
+        GithubInstallation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            installation_id: number;
+            account_login: string;
+            /** @description "User" or "Organization" (mirrors GitHub). */
+            account_type: string;
+            /** Format: int64 */
+            account_id: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            suspended_at?: string | null;
+        };
+        GithubInstallationList: {
+            installations: components["schemas"]["GithubInstallation"][];
+        };
+        GithubRepository: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            full_name: string;
+            private: boolean;
+            default_branch: string;
+            /** Format: uri */
+            html_url: string;
+        };
+        GithubRepositoryList: {
+            repositories: components["schemas"]["GithubRepository"][];
+        };
     };
     responses: {
         /** @description Error response */
@@ -208,7 +366,10 @@ export interface components {
             };
         };
     };
-    parameters: never;
+    parameters: {
+        OrgSlug: string;
+        InstallationID: number;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -346,6 +507,123 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startGithubInstall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Install URL ready */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GithubInstallStart"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    completeGithubInstall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GithubInstallCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Installation persisted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GithubInstallCompleteResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listGithubInstallations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Installations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GithubInstallationList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteGithubInstallation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+                installationId: components["parameters"]["InstallationID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected (idempotent) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listGithubInstallationRepositories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+                installationId: components["parameters"]["InstallationID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Repositories */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GithubRepositoryList"];
+                };
             };
             default: components["responses"]["Error"];
         };

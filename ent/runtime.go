@@ -8,6 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/spacefleet/app/ent/cliauthcode"
 	"github.com/spacefleet/app/ent/clitoken"
+	"github.com/spacefleet/app/ent/githubinstallation"
+	"github.com/spacefleet/app/ent/githubinstallstate"
 	"github.com/spacefleet/app/ent/schema"
 )
 
@@ -91,4 +93,68 @@ func init() {
 	clitokenDescID := clitokenFields[0].Descriptor()
 	// clitoken.DefaultID holds the default value on creation for the id field.
 	clitoken.DefaultID = clitokenDescID.Default.(func() uuid.UUID)
+	githubinstallstateFields := schema.GithubInstallState{}.Fields()
+	_ = githubinstallstateFields
+	// githubinstallstateDescStateHash is the schema descriptor for state_hash field.
+	githubinstallstateDescStateHash := githubinstallstateFields[1].Descriptor()
+	// githubinstallstate.StateHashValidator is a validator for the "state_hash" field. It is called by the builders before save.
+	githubinstallstate.StateHashValidator = func() func([]byte) error {
+		validators := githubinstallstateDescStateHash.Validators
+		fns := [...]func([]byte) error{
+			validators[0].(func([]byte) error),
+			validators[1].(func([]byte) error),
+		}
+		return func(state_hash []byte) error {
+			for _, fn := range fns {
+				if err := fn(state_hash); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// githubinstallstateDescOrgSlug is the schema descriptor for org_slug field.
+	githubinstallstateDescOrgSlug := githubinstallstateFields[2].Descriptor()
+	// githubinstallstate.OrgSlugValidator is a validator for the "org_slug" field. It is called by the builders before save.
+	githubinstallstate.OrgSlugValidator = githubinstallstateDescOrgSlug.Validators[0].(func(string) error)
+	// githubinstallstateDescUserID is the schema descriptor for user_id field.
+	githubinstallstateDescUserID := githubinstallstateFields[3].Descriptor()
+	// githubinstallstate.UserIDValidator is a validator for the "user_id" field. It is called by the builders before save.
+	githubinstallstate.UserIDValidator = githubinstallstateDescUserID.Validators[0].(func(string) error)
+	// githubinstallstateDescCreatedAt is the schema descriptor for created_at field.
+	githubinstallstateDescCreatedAt := githubinstallstateFields[4].Descriptor()
+	// githubinstallstate.DefaultCreatedAt holds the default value on creation for the created_at field.
+	githubinstallstate.DefaultCreatedAt = githubinstallstateDescCreatedAt.Default.(func() time.Time)
+	// githubinstallstateDescID is the schema descriptor for id field.
+	githubinstallstateDescID := githubinstallstateFields[0].Descriptor()
+	// githubinstallstate.DefaultID holds the default value on creation for the id field.
+	githubinstallstate.DefaultID = githubinstallstateDescID.Default.(func() uuid.UUID)
+	githubinstallationFields := schema.GithubInstallation{}.Fields()
+	_ = githubinstallationFields
+	// githubinstallationDescOrgSlug is the schema descriptor for org_slug field.
+	githubinstallationDescOrgSlug := githubinstallationFields[1].Descriptor()
+	// githubinstallation.OrgSlugValidator is a validator for the "org_slug" field. It is called by the builders before save.
+	githubinstallation.OrgSlugValidator = githubinstallationDescOrgSlug.Validators[0].(func(string) error)
+	// githubinstallationDescAccountLogin is the schema descriptor for account_login field.
+	githubinstallationDescAccountLogin := githubinstallationFields[3].Descriptor()
+	// githubinstallation.AccountLoginValidator is a validator for the "account_login" field. It is called by the builders before save.
+	githubinstallation.AccountLoginValidator = githubinstallationDescAccountLogin.Validators[0].(func(string) error)
+	// githubinstallationDescAccountType is the schema descriptor for account_type field.
+	githubinstallationDescAccountType := githubinstallationFields[4].Descriptor()
+	// githubinstallation.AccountTypeValidator is a validator for the "account_type" field. It is called by the builders before save.
+	githubinstallation.AccountTypeValidator = githubinstallationDescAccountType.Validators[0].(func(string) error)
+	// githubinstallationDescCreatedAt is the schema descriptor for created_at field.
+	githubinstallationDescCreatedAt := githubinstallationFields[6].Descriptor()
+	// githubinstallation.DefaultCreatedAt holds the default value on creation for the created_at field.
+	githubinstallation.DefaultCreatedAt = githubinstallationDescCreatedAt.Default.(func() time.Time)
+	// githubinstallationDescUpdatedAt is the schema descriptor for updated_at field.
+	githubinstallationDescUpdatedAt := githubinstallationFields[7].Descriptor()
+	// githubinstallation.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	githubinstallation.DefaultUpdatedAt = githubinstallationDescUpdatedAt.Default.(func() time.Time)
+	// githubinstallation.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	githubinstallation.UpdateDefaultUpdatedAt = githubinstallationDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// githubinstallationDescID is the schema descriptor for id field.
+	githubinstallationDescID := githubinstallationFields[0].Descriptor()
+	// githubinstallation.DefaultID holds the default value on creation for the id field.
+	githubinstallation.DefaultID = githubinstallationDescID.Default.(func() uuid.UUID)
 }

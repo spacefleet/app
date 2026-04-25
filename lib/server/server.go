@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/spacefleet/app/lib/cli"
 	"github.com/spacefleet/app/lib/config"
 	"github.com/spacefleet/app/lib/db"
+	"github.com/spacefleet/app/lib/github"
 )
 
 // New wires all runtime dependencies (Postgres, Redis, the CLI auth
@@ -38,9 +40,26 @@ func New(cfg *config.Config) (*http.Server, error) {
 
 	cliSvc := cli.NewService(entClient, redisClient)
 
+	var ghSvc *github.Service
+	if cfg.GitHubAppConfigured() {
+		app, err := github.NewApp(cfg.GitHubAppID, cfg.GitHubAppSlug, cfg.GitHubAppPrivateKey)
+		if err != nil {
+			_ = entClient.Close()
+			_ = sqlDB.Close()
+			_ = redisClient.Close()
+			return nil, fmt.Errorf("github app: %w", err)
+		}
+		ghSvc = github.NewService(entClient, app)
+	} else {
+		// Fail open: the GitHub flows return a clear "not configured"
+		// error at request time. Useful for local dev where you might
+		// not have an App registered yet.
+		log.Print("github app not configured (set GITHUB_APP_ID, GITHUB_APP_SLUG, GITHUB_APP_PRIVATE_KEY[_PATH] to enable)")
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           buildHandler(cfg, cliSvc),
+		Handler:           buildHandler(cfg, cliSvc, ghSvc),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -55,10 +74,11 @@ func New(cfg *config.Config) (*http.Server, error) {
 }
 
 // buildHandler composes the full HTTP handler tree given pre-built deps.
-// cliSvc may be nil — the middleware rejects CLI-prefixed tokens in that
-// case, which keeps route-level tests usable without a database.
-func buildHandler(cfg *config.Config, cliSvc *cli.Service) http.Handler {
+// Either service may be nil — middleware rejects CLI tokens when cliSvc
+// is missing, and the GitHub routes return a clear error when ghSvc is
+// missing. Both behaviors keep route-level tests usable without a DB.
+func buildHandler(cfg *config.Config, cliSvc *cli.Service, ghSvc *github.Service) http.Handler {
 	mux := http.NewServeMux()
-	registerRoutes(mux, cfg, cliSvc)
+	registerRoutes(mux, cfg, cliSvc, ghSvc)
 	return logRequests(mux)
 }

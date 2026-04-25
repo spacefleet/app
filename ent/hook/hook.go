@@ -33,6 +33,30 @@ func (f CLITokenFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, er
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.CLITokenMutation", m)
 }
 
+// The GithubInstallStateFunc type is an adapter to allow the use of ordinary
+// function as GithubInstallState mutator.
+type GithubInstallStateFunc func(context.Context, *ent.GithubInstallStateMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f GithubInstallStateFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.GithubInstallStateMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.GithubInstallStateMutation", m)
+}
+
+// The GithubInstallationFunc type is an adapter to allow the use of ordinary
+// function as GithubInstallation mutator.
+type GithubInstallationFunc func(context.Context, *ent.GithubInstallationMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f GithubInstallationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.GithubInstallationMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.GithubInstallationMutation", m)
+}
+
 // Condition is a hook condition function.
 type Condition func(context.Context, ent.Mutation) bool
 

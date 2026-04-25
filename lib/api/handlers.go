@@ -10,14 +10,20 @@ import (
 
 	"github.com/spacefleet/app/lib/auth"
 	"github.com/spacefleet/app/lib/cli"
+	"github.com/spacefleet/app/lib/github"
 )
 
 type Server struct {
 	cli *cli.Service
+	gh  *github.Service
 }
 
-func NewServer(cliSvc *cli.Service) *Server {
-	return &Server{cli: cliSvc}
+// NewServer accepts the runtime services this API depends on. Either may
+// be nil — features whose service is missing return a clear "not
+// configured" error instead of panicking, which keeps route-level tests
+// usable without a database or GitHub App.
+func NewServer(cliSvc *cli.Service, ghSvc *github.Service) *Server {
+	return &Server{cli: cliSvc, gh: ghSvc}
 }
 
 var _ StrictServerInterface = (*Server)(nil)

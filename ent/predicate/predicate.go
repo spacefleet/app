@@ -11,3 +11,9 @@ type CLIAuthCode func(*sql.Selector)
 
 // CLIToken is the predicate function for clitoken builders.
 type CLIToken func(*sql.Selector)
+
+// GithubInstallState is the predicate function for githubinstallstate builders.
+type GithubInstallState func(*sql.Selector)
+
+// GithubInstallation is the predicate function for githubinstallation builders.
+type GithubInstallation func(*sql.Selector)

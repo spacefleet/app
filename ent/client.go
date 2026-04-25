@@ -17,6 +17,8 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"github.com/spacefleet/app/ent/cliauthcode"
 	"github.com/spacefleet/app/ent/clitoken"
+	"github.com/spacefleet/app/ent/githubinstallation"
+	"github.com/spacefleet/app/ent/githubinstallstate"
 )
 
 // Client is the client that holds all ent builders.
@@ -28,6 +30,10 @@ type Client struct {
 	CLIAuthCode *CLIAuthCodeClient
 	// CLIToken is the client for interacting with the CLIToken builders.
 	CLIToken *CLITokenClient
+	// GithubInstallState is the client for interacting with the GithubInstallState builders.
+	GithubInstallState *GithubInstallStateClient
+	// GithubInstallation is the client for interacting with the GithubInstallation builders.
+	GithubInstallation *GithubInstallationClient
 }
 
 // NewClient creates a new client configured with the given options.
@@ -41,6 +47,8 @@ func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
 	c.CLIAuthCode = NewCLIAuthCodeClient(c.config)
 	c.CLIToken = NewCLITokenClient(c.config)
+	c.GithubInstallState = NewGithubInstallStateClient(c.config)
+	c.GithubInstallation = NewGithubInstallationClient(c.config)
 }
 
 type (
@@ -131,10 +139,12 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	cfg := c.config
 	cfg.driver = tx
 	return &Tx{
-		ctx:         ctx,
-		config:      cfg,
-		CLIAuthCode: NewCLIAuthCodeClient(cfg),
-		CLIToken:    NewCLITokenClient(cfg),
+		ctx:                ctx,
+		config:             cfg,
+		CLIAuthCode:        NewCLIAuthCodeClient(cfg),
+		CLIToken:           NewCLITokenClient(cfg),
+		GithubInstallState: NewGithubInstallStateClient(cfg),
+		GithubInstallation: NewGithubInstallationClient(cfg),
 	}, nil
 }
 
@@ -152,10 +162,12 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	cfg := c.config
 	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
-		ctx:         ctx,
-		config:      cfg,
-		CLIAuthCode: NewCLIAuthCodeClient(cfg),
-		CLIToken:    NewCLITokenClient(cfg),
+		ctx:                ctx,
+		config:             cfg,
+		CLIAuthCode:        NewCLIAuthCodeClient(cfg),
+		CLIToken:           NewCLITokenClient(cfg),
+		GithubInstallState: NewGithubInstallStateClient(cfg),
+		GithubInstallation: NewGithubInstallationClient(cfg),
 	}, nil
 }
 
@@ -186,6 +198,8 @@ func (c *Client) Close() error {
 func (c *Client) Use(hooks ...Hook) {
 	c.CLIAuthCode.Use(hooks...)
 	c.CLIToken.Use(hooks...)
+	c.GithubInstallState.Use(hooks...)
+	c.GithubInstallation.Use(hooks...)
 }
 
 // Intercept adds the query interceptors to all the entity clients.
@@ -193,6 +207,8 @@ func (c *Client) Use(hooks ...Hook) {
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	c.CLIAuthCode.Intercept(interceptors...)
 	c.CLIToken.Intercept(interceptors...)
+	c.GithubInstallState.Intercept(interceptors...)
+	c.GithubInstallation.Intercept(interceptors...)
 }
 
 // Mutate implements the ent.Mutator interface.
@@ -202,6 +218,10 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.CLIAuthCode.mutate(ctx, m)
 	case *CLITokenMutation:
 		return c.CLIToken.mutate(ctx, m)
+	case *GithubInstallStateMutation:
+		return c.GithubInstallState.mutate(ctx, m)
+	case *GithubInstallationMutation:
+		return c.GithubInstallation.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("ent: unknown mutation type %T", m)
 	}
@@ -473,12 +493,278 @@ func (c *CLITokenClient) mutate(ctx context.Context, m *CLITokenMutation) (Value
 	}
 }
 
+// GithubInstallStateClient is a client for the GithubInstallState schema.
+type GithubInstallStateClient struct {
+	config
+}
+
+// NewGithubInstallStateClient returns a client for the GithubInstallState from the given config.
+func NewGithubInstallStateClient(c config) *GithubInstallStateClient {
+	return &GithubInstallStateClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `githubinstallstate.Hooks(f(g(h())))`.
+func (c *GithubInstallStateClient) Use(hooks ...Hook) {
+	c.hooks.GithubInstallState = append(c.hooks.GithubInstallState, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `githubinstallstate.Intercept(f(g(h())))`.
+func (c *GithubInstallStateClient) Intercept(interceptors ...Interceptor) {
+	c.inters.GithubInstallState = append(c.inters.GithubInstallState, interceptors...)
+}
+
+// Create returns a builder for creating a GithubInstallState entity.
+func (c *GithubInstallStateClient) Create() *GithubInstallStateCreate {
+	mutation := newGithubInstallStateMutation(c.config, OpCreate)
+	return &GithubInstallStateCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of GithubInstallState entities.
+func (c *GithubInstallStateClient) CreateBulk(builders ...*GithubInstallStateCreate) *GithubInstallStateCreateBulk {
+	return &GithubInstallStateCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *GithubInstallStateClient) MapCreateBulk(slice any, setFunc func(*GithubInstallStateCreate, int)) *GithubInstallStateCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &GithubInstallStateCreateBulk{err: fmt.Errorf("calling to GithubInstallStateClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*GithubInstallStateCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &GithubInstallStateCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for GithubInstallState.
+func (c *GithubInstallStateClient) Update() *GithubInstallStateUpdate {
+	mutation := newGithubInstallStateMutation(c.config, OpUpdate)
+	return &GithubInstallStateUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *GithubInstallStateClient) UpdateOne(_m *GithubInstallState) *GithubInstallStateUpdateOne {
+	mutation := newGithubInstallStateMutation(c.config, OpUpdateOne, withGithubInstallState(_m))
+	return &GithubInstallStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *GithubInstallStateClient) UpdateOneID(id uuid.UUID) *GithubInstallStateUpdateOne {
+	mutation := newGithubInstallStateMutation(c.config, OpUpdateOne, withGithubInstallStateID(id))
+	return &GithubInstallStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for GithubInstallState.
+func (c *GithubInstallStateClient) Delete() *GithubInstallStateDelete {
+	mutation := newGithubInstallStateMutation(c.config, OpDelete)
+	return &GithubInstallStateDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *GithubInstallStateClient) DeleteOne(_m *GithubInstallState) *GithubInstallStateDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *GithubInstallStateClient) DeleteOneID(id uuid.UUID) *GithubInstallStateDeleteOne {
+	builder := c.Delete().Where(githubinstallstate.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &GithubInstallStateDeleteOne{builder}
+}
+
+// Query returns a query builder for GithubInstallState.
+func (c *GithubInstallStateClient) Query() *GithubInstallStateQuery {
+	return &GithubInstallStateQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeGithubInstallState},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a GithubInstallState entity by its id.
+func (c *GithubInstallStateClient) Get(ctx context.Context, id uuid.UUID) (*GithubInstallState, error) {
+	return c.Query().Where(githubinstallstate.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *GithubInstallStateClient) GetX(ctx context.Context, id uuid.UUID) *GithubInstallState {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *GithubInstallStateClient) Hooks() []Hook {
+	return c.hooks.GithubInstallState
+}
+
+// Interceptors returns the client interceptors.
+func (c *GithubInstallStateClient) Interceptors() []Interceptor {
+	return c.inters.GithubInstallState
+}
+
+func (c *GithubInstallStateClient) mutate(ctx context.Context, m *GithubInstallStateMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&GithubInstallStateCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&GithubInstallStateUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&GithubInstallStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&GithubInstallStateDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown GithubInstallState mutation op: %q", m.Op())
+	}
+}
+
+// GithubInstallationClient is a client for the GithubInstallation schema.
+type GithubInstallationClient struct {
+	config
+}
+
+// NewGithubInstallationClient returns a client for the GithubInstallation from the given config.
+func NewGithubInstallationClient(c config) *GithubInstallationClient {
+	return &GithubInstallationClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `githubinstallation.Hooks(f(g(h())))`.
+func (c *GithubInstallationClient) Use(hooks ...Hook) {
+	c.hooks.GithubInstallation = append(c.hooks.GithubInstallation, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `githubinstallation.Intercept(f(g(h())))`.
+func (c *GithubInstallationClient) Intercept(interceptors ...Interceptor) {
+	c.inters.GithubInstallation = append(c.inters.GithubInstallation, interceptors...)
+}
+
+// Create returns a builder for creating a GithubInstallation entity.
+func (c *GithubInstallationClient) Create() *GithubInstallationCreate {
+	mutation := newGithubInstallationMutation(c.config, OpCreate)
+	return &GithubInstallationCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of GithubInstallation entities.
+func (c *GithubInstallationClient) CreateBulk(builders ...*GithubInstallationCreate) *GithubInstallationCreateBulk {
+	return &GithubInstallationCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *GithubInstallationClient) MapCreateBulk(slice any, setFunc func(*GithubInstallationCreate, int)) *GithubInstallationCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &GithubInstallationCreateBulk{err: fmt.Errorf("calling to GithubInstallationClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*GithubInstallationCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &GithubInstallationCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for GithubInstallation.
+func (c *GithubInstallationClient) Update() *GithubInstallationUpdate {
+	mutation := newGithubInstallationMutation(c.config, OpUpdate)
+	return &GithubInstallationUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *GithubInstallationClient) UpdateOne(_m *GithubInstallation) *GithubInstallationUpdateOne {
+	mutation := newGithubInstallationMutation(c.config, OpUpdateOne, withGithubInstallation(_m))
+	return &GithubInstallationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *GithubInstallationClient) UpdateOneID(id uuid.UUID) *GithubInstallationUpdateOne {
+	mutation := newGithubInstallationMutation(c.config, OpUpdateOne, withGithubInstallationID(id))
+	return &GithubInstallationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for GithubInstallation.
+func (c *GithubInstallationClient) Delete() *GithubInstallationDelete {
+	mutation := newGithubInstallationMutation(c.config, OpDelete)
+	return &GithubInstallationDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *GithubInstallationClient) DeleteOne(_m *GithubInstallation) *GithubInstallationDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *GithubInstallationClient) DeleteOneID(id uuid.UUID) *GithubInstallationDeleteOne {
+	builder := c.Delete().Where(githubinstallation.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &GithubInstallationDeleteOne{builder}
+}
+
+// Query returns a query builder for GithubInstallation.
+func (c *GithubInstallationClient) Query() *GithubInstallationQuery {
+	return &GithubInstallationQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeGithubInstallation},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a GithubInstallation entity by its id.
+func (c *GithubInstallationClient) Get(ctx context.Context, id uuid.UUID) (*GithubInstallation, error) {
+	return c.Query().Where(githubinstallation.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *GithubInstallationClient) GetX(ctx context.Context, id uuid.UUID) *GithubInstallation {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *GithubInstallationClient) Hooks() []Hook {
+	return c.hooks.GithubInstallation
+}
+
+// Interceptors returns the client interceptors.
+func (c *GithubInstallationClient) Interceptors() []Interceptor {
+	return c.inters.GithubInstallation
+}
+
+func (c *GithubInstallationClient) mutate(ctx context.Context, m *GithubInstallationMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&GithubInstallationCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&GithubInstallationUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&GithubInstallationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&GithubInstallationDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown GithubInstallation mutation op: %q", m.Op())
+	}
+}
+
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		CLIAuthCode, CLIToken []ent.Hook
+		CLIAuthCode, CLIToken, GithubInstallState, GithubInstallation []ent.Hook
 	}
 	inters struct {
-		CLIAuthCode, CLIToken []ent.Interceptor
+		CLIAuthCode, CLIToken, GithubInstallState, GithubInstallation []ent.Interceptor
 	}
 )

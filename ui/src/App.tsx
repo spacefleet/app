@@ -6,6 +6,8 @@ import { RequireOrganization } from "./components/RequireOrganization";
 import { AccountTokens } from "./routes/AccountTokens";
 import { CliAuth } from "./routes/CliAuth";
 import { Dashboard } from "./routes/Dashboard";
+import { GitHubCallback } from "./routes/GitHubCallback";
+import { IntegrationsGitHub } from "./routes/IntegrationsGitHub";
 import { NotFound } from "./routes/NotFound";
 import { RootRedirect } from "./routes/RootRedirect";
 import { SelectOrganization } from "./routes/SelectOrganization";
@@ -24,12 +26,22 @@ export function App() {
           {/* CLI approval lives outside Layout — it's reached only from
               the CLI-generated URL and should be focused chrome. */}
           <Route path="/cli-auth" element={<CliAuth />} />
+          {/* GitHub App setup-callback URL — outside Layout because it's
+              transient and reached only by GitHub's redirect. */}
+          <Route
+            path="/integrations/github/callback"
+            element={<GitHubCallback />}
+          />
 
           <Route element={<Layout />}>
             <Route index element={<RootRedirect />} />
             <Route path="account/tokens" element={<AccountTokens />} />
             <Route path=":orgSlug" element={<RequireOrganization />}>
               <Route index element={<Dashboard />} />
+              <Route
+                path="integrations/github"
+                element={<IntegrationsGitHub />}
+              />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Route>

@@ -118,6 +118,106 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/orgs/{slug}/github/installations/start:
+    post:
+      summary: Begin a GitHub App install handshake
+      description: |
+        Issues a one-time CSRF state and returns the URL the browser should
+        send the user to. After install, GitHub redirects back to the App's
+        configured setup URL with `installation_id` and `state`; the SPA
+        finishes the handshake via `/api/github/installations/complete`.
+      operationId: startGithubInstall
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+      responses:
+        "200":
+          description: Install URL ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GithubInstallStart"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/github/installations/complete:
+    post:
+      summary: Finalize a GitHub App install handshake (Clerk session only)
+      description: |
+        Called by the SPA setup-callback page with the `state` and
+        `installation_id` returned from GitHub. Verifies the state, fetches
+        the installation from GitHub via App-level auth, and persists it
+        scoped to the org that started the handshake. Not org-prefixed
+        because the org is recovered from the state itself.
+      operationId: completeGithubInstall
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GithubInstallCompleteRequest"
+      responses:
+        "200":
+          description: Installation persisted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GithubInstallCompleteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/orgs/{slug}/github/installations:
+    get:
+      summary: List GitHub App installations connected to this org
+      operationId: listGithubInstallations
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+      responses:
+        "200":
+          description: Installations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GithubInstallationList"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/orgs/{slug}/github/installations/{installationId}:
+    delete:
+      summary: Disconnect a GitHub App installation from this org
+      description: |
+        Drops Spacefleet's record of the installation. Does not uninstall
+        the GitHub App on github.com — that's the user's choice.
+      operationId: deleteGithubInstallation
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+        - $ref: "#/components/parameters/InstallationID"
+      responses:
+        "204":
+          description: Disconnected (idempotent)
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/orgs/{slug}/github/installations/{installationId}/repositories:
+    get:
+      summary: List repositories accessible to a GitHub App installation
+      description: |
+        Mints a fresh installation access token and enumerates the repos
+        the App has been granted on. This is what the build pipeline will
+        clone from.
+      operationId: listGithubInstallationRepositories
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+        - $ref: "#/components/parameters/InstallationID"
+      responses:
+        "200":
+          description: Repositories
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GithubRepositoryList"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/cli/whoami:
     get:
       summary: Return the user associated with the CLI token
@@ -243,6 +343,127 @@ components:
         source:
           type: string
           enum: [clerk, cli]
+
+    GithubInstallStart:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: |
+            Send the user here to install the App. State is embedded in the
+            URL; the caller does not need to track it.
+
+    GithubInstallCompleteRequest:
+      type: object
+      required: [state, installation_id]
+      properties:
+        state:
+          type: string
+        installation_id:
+          type: integer
+          format: int64
+
+    GithubInstallCompleteResponse:
+      type: object
+      required: [installation, org_slug]
+      properties:
+        installation:
+          $ref: "#/components/schemas/GithubInstallation"
+        org_slug:
+          type: string
+          description: The org the installation was bound to. Use it to redirect.
+
+    GithubInstallation:
+      type: object
+      required:
+        [
+          id,
+          installation_id,
+          account_login,
+          account_type,
+          account_id,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        installation_id:
+          type: integer
+          format: int64
+        account_login:
+          type: string
+        account_type:
+          type: string
+          description: '"User" or "Organization" (mirrors GitHub).'
+        account_id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        suspended_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    GithubInstallationList:
+      type: object
+      required: [installations]
+      properties:
+        installations:
+          type: array
+          items:
+            $ref: "#/components/schemas/GithubInstallation"
+
+    GithubRepository:
+      type: object
+      required: [id, name, full_name, private, default_branch, html_url]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        full_name:
+          type: string
+        private:
+          type: boolean
+        default_branch:
+          type: string
+        html_url:
+          type: string
+          format: uri
+
+    GithubRepositoryList:
+      type: object
+      required: [repositories]
+      properties:
+        repositories:
+          type: array
+          items:
+            $ref: "#/components/schemas/GithubRepository"
+
+  parameters:
+    OrgSlug:
+      in: path
+      name: slug
+      required: true
+      schema:
+        type: string
+    InstallationID:
+      in: path
+      name: installationId
+      required: true
+      schema:
+        type: integer
+        format: int64
 
   responses:
     Error:

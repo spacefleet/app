@@ -14,7 +14,7 @@ import (
 // /api/ping hits the auth middleware and should reject before any handler
 // runs, and the SPA fallback is entirely static.
 func handler() http.Handler {
-	return buildHandler(&config.Config{Addr: ":0", Env: "test"}, nil)
+	return buildHandler(&config.Config{Addr: ":0", Env: "test"}, nil, nil)
 }
 
 func TestHealthEndpointIsPublic(t *testing.T) {

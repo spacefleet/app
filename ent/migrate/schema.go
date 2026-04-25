@@ -49,10 +49,53 @@ var (
 			},
 		},
 	}
+	// GithubInstallStatesColumns holds the columns for the "github_install_states" table.
+	GithubInstallStatesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID},
+		{Name: "state_hash", Type: field.TypeBytes, Unique: true, Size: 32},
+		{Name: "org_slug", Type: field.TypeString},
+		{Name: "user_id", Type: field.TypeString},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "expires_at", Type: field.TypeTime},
+		{Name: "consumed_at", Type: field.TypeTime, Nullable: true},
+	}
+	// GithubInstallStatesTable holds the schema information for the "github_install_states" table.
+	GithubInstallStatesTable = &schema.Table{
+		Name:       "github_install_states",
+		Columns:    GithubInstallStatesColumns,
+		PrimaryKey: []*schema.Column{GithubInstallStatesColumns[0]},
+	}
+	// GithubInstallationsColumns holds the columns for the "github_installations" table.
+	GithubInstallationsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID},
+		{Name: "org_slug", Type: field.TypeString},
+		{Name: "installation_id", Type: field.TypeInt64, Unique: true},
+		{Name: "account_login", Type: field.TypeString},
+		{Name: "account_type", Type: field.TypeString},
+		{Name: "account_id", Type: field.TypeInt64},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "suspended_at", Type: field.TypeTime, Nullable: true},
+	}
+	// GithubInstallationsTable holds the schema information for the "github_installations" table.
+	GithubInstallationsTable = &schema.Table{
+		Name:       "github_installations",
+		Columns:    GithubInstallationsColumns,
+		PrimaryKey: []*schema.Column{GithubInstallationsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "githubinstallation_org_slug",
+				Unique:  false,
+				Columns: []*schema.Column{GithubInstallationsColumns[1]},
+			},
+		},
+	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		CliAuthCodesTable,
 		CliTokensTable,
+		GithubInstallStatesTable,
+		GithubInstallationsTable,
 	}
 )
 

@@ -11,6 +11,7 @@ import (
 	"github.com/spacefleet/app/lib/auth"
 	"github.com/spacefleet/app/lib/cli"
 	"github.com/spacefleet/app/lib/config"
+	"github.com/spacefleet/app/lib/github"
 	"github.com/spacefleet/app/ui"
 )
 
@@ -22,11 +23,11 @@ var publicAPIPaths = []string{
 	"/api/cli/auth/exchange",
 }
 
-func registerRoutes(mux *http.ServeMux, cfg *config.Config, cliSvc *cli.Service) {
+func registerRoutes(mux *http.ServeMux, cfg *config.Config, cliSvc *cli.Service, ghSvc *github.Service) {
 	// API routes are generated from api/openapi.yaml and mounted under /api/*.
 	// oapi-codegen applies middlewares in reverse, so the last entry wraps
 	// outermost: RequireAuth runs first, then RequireOrg, then the handler.
-	api.HandlerWithOptions(api.NewStrictHandler(api.NewServer(cliSvc), nil), api.StdHTTPServerOptions{
+	api.HandlerWithOptions(api.NewStrictHandler(api.NewServer(cliSvc, ghSvc), nil), api.StdHTTPServerOptions{
 		BaseRouter: mux,
 		Middlewares: []api.MiddlewareFunc{
 			api.MiddlewareFunc(auth.RequireOrg(cliMemberChecker(cliSvc))),

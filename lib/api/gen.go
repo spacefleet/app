@@ -117,6 +117,61 @@ type Error struct {
 	Message string `json:"message"`
 }
 
+// GithubInstallCompleteRequest defines model for GithubInstallCompleteRequest.
+type GithubInstallCompleteRequest struct {
+	InstallationId int64  `json:"installation_id"`
+	State          string `json:"state"`
+}
+
+// GithubInstallCompleteResponse defines model for GithubInstallCompleteResponse.
+type GithubInstallCompleteResponse struct {
+	Installation GithubInstallation `json:"installation"`
+
+	// OrgSlug The org the installation was bound to. Use it to redirect.
+	OrgSlug string `json:"org_slug"`
+}
+
+// GithubInstallStart defines model for GithubInstallStart.
+type GithubInstallStart struct {
+	// Url Send the user here to install the App. State is embedded in the
+	// URL; the caller does not need to track it.
+	Url string `json:"url"`
+}
+
+// GithubInstallation defines model for GithubInstallation.
+type GithubInstallation struct {
+	AccountId    int64  `json:"account_id"`
+	AccountLogin string `json:"account_login"`
+
+	// AccountType "User" or "Organization" (mirrors GitHub).
+	AccountType    string             `json:"account_type"`
+	CreatedAt      time.Time          `json:"created_at"`
+	Id             openapi_types.UUID `json:"id"`
+	InstallationId int64              `json:"installation_id"`
+	SuspendedAt    *time.Time         `json:"suspended_at,omitempty"`
+	UpdatedAt      time.Time          `json:"updated_at"`
+}
+
+// GithubInstallationList defines model for GithubInstallationList.
+type GithubInstallationList struct {
+	Installations []GithubInstallation `json:"installations"`
+}
+
+// GithubRepository defines model for GithubRepository.
+type GithubRepository struct {
+	DefaultBranch string `json:"default_branch"`
+	FullName      string `json:"full_name"`
+	HtmlUrl       string `json:"html_url"`
+	Id            int64  `json:"id"`
+	Name          string `json:"name"`
+	Private       bool   `json:"private"`
+}
+
+// GithubRepositoryList defines model for GithubRepositoryList.
+type GithubRepositoryList struct {
+	Repositories []GithubRepository `json:"repositories"`
+}
+
 // Greeting defines model for Greeting.
 type Greeting struct {
 	Message string `json:"message"`
@@ -130,6 +185,12 @@ type Health struct {
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
 
+// InstallationID defines model for InstallationID.
+type InstallationID = int64
+
+// OrgSlug defines model for OrgSlug.
+type OrgSlug = string
+
 // GetPingParams defines parameters for GetPing.
 type GetPingParams struct {
 	Name *string `form:"name,omitempty" json:"name,omitempty"`
@@ -140,6 +201,9 @@ type ApproveCliAuthJSONRequestBody = CliApproveRequest
 
 // ExchangeCliAuthJSONRequestBody defines body for ExchangeCliAuth for application/json ContentType.
 type ExchangeCliAuthJSONRequestBody = CliExchangeRequest
+
+// CompleteGithubInstallJSONRequestBody defines body for CompleteGithubInstall for application/json ContentType.
+type CompleteGithubInstallJSONRequestBody = GithubInstallCompleteRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -158,9 +222,24 @@ type ServerInterface interface {
 	// Return the user associated with the CLI token
 	// (GET /api/cli/whoami)
 	CliWhoami(w http.ResponseWriter, r *http.Request)
+	// Finalize a GitHub App install handshake (Clerk session only)
+	// (POST /api/github/installations/complete)
+	CompleteGithubInstall(w http.ResponseWriter, r *http.Request)
 	// Liveness probe
 	// (GET /api/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// List GitHub App installations connected to this org
+	// (GET /api/orgs/{slug}/github/installations)
+	ListGithubInstallations(w http.ResponseWriter, r *http.Request, slug OrgSlug)
+	// Begin a GitHub App install handshake
+	// (POST /api/orgs/{slug}/github/installations/start)
+	StartGithubInstall(w http.ResponseWriter, r *http.Request, slug OrgSlug)
+	// Disconnect a GitHub App installation from this org
+	// (DELETE /api/orgs/{slug}/github/installations/{installationId})
+	DeleteGithubInstallation(w http.ResponseWriter, r *http.Request, slug OrgSlug, installationId InstallationID)
+	// List repositories accessible to a GitHub App installation
+	// (GET /api/orgs/{slug}/github/installations/{installationId}/repositories)
+	ListGithubInstallationRepositories(w http.ResponseWriter, r *http.Request, slug OrgSlug, installationId InstallationID)
 	// Echo a greeting
 	// (GET /api/ping)
 	GetPing(w http.ResponseWriter, r *http.Request, params GetPingParams)
@@ -256,11 +335,143 @@ func (siw *ServerInterfaceWrapper) CliWhoami(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// CompleteGithubInstall operation middleware
+func (siw *ServerInterfaceWrapper) CompleteGithubInstall(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteGithubInstall(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetHealth operation middleware
 func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListGithubInstallations operation middleware
+func (siw *ServerInterfaceWrapper) ListGithubInstallations(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListGithubInstallations(w, r, slug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartGithubInstall operation middleware
+func (siw *ServerInterfaceWrapper) StartGithubInstall(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartGithubInstall(w, r, slug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteGithubInstallation operation middleware
+func (siw *ServerInterfaceWrapper) DeleteGithubInstallation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "installationId" -------------
+	var installationId InstallationID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "installationId", r.PathValue("installationId"), &installationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "installationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteGithubInstallation(w, r, slug, installationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListGithubInstallationRepositories operation middleware
+func (siw *ServerInterfaceWrapper) ListGithubInstallationRepositories(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "installationId" -------------
+	var installationId InstallationID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "installationId", r.PathValue("installationId"), &installationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "installationId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListGithubInstallationRepositories(w, r, slug, installationId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -422,7 +633,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/api/cli/tokens", wrapper.ListCliTokens)
 	m.HandleFunc("DELETE "+options.BaseURL+"/api/cli/tokens/{id}", wrapper.RevokeCliToken)
 	m.HandleFunc("GET "+options.BaseURL+"/api/cli/whoami", wrapper.CliWhoami)
+	m.HandleFunc("POST "+options.BaseURL+"/api/github/installations/complete", wrapper.CompleteGithubInstall)
 	m.HandleFunc("GET "+options.BaseURL+"/api/health", wrapper.GetHealth)
+	m.HandleFunc("GET "+options.BaseURL+"/api/orgs/{slug}/github/installations", wrapper.ListGithubInstallations)
+	m.HandleFunc("POST "+options.BaseURL+"/api/orgs/{slug}/github/installations/start", wrapper.StartGithubInstall)
+	m.HandleFunc("DELETE "+options.BaseURL+"/api/orgs/{slug}/github/installations/{installationId}", wrapper.DeleteGithubInstallation)
+	m.HandleFunc("GET "+options.BaseURL+"/api/orgs/{slug}/github/installations/{installationId}/repositories", wrapper.ListGithubInstallationRepositories)
 	m.HandleFunc("GET "+options.BaseURL+"/api/ping", wrapper.GetPing)
 
 	return m
@@ -572,6 +788,35 @@ func (response CliWhoamidefaultJSONResponse) VisitCliWhoamiResponse(w http.Respo
 	return json.NewEncoder(w).Encode(response.Body)
 }
 
+type CompleteGithubInstallRequestObject struct {
+	Body *CompleteGithubInstallJSONRequestBody
+}
+
+type CompleteGithubInstallResponseObject interface {
+	VisitCompleteGithubInstallResponse(w http.ResponseWriter) error
+}
+
+type CompleteGithubInstall200JSONResponse GithubInstallCompleteResponse
+
+func (response CompleteGithubInstall200JSONResponse) VisitCompleteGithubInstallResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CompleteGithubInstalldefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response CompleteGithubInstalldefaultJSONResponse) VisitCompleteGithubInstallResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type GetHealthRequestObject struct {
 }
 
@@ -586,6 +831,123 @@ func (response GetHealth200JSONResponse) VisitGetHealthResponse(w http.ResponseW
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type ListGithubInstallationsRequestObject struct {
+	Slug OrgSlug `json:"slug"`
+}
+
+type ListGithubInstallationsResponseObject interface {
+	VisitListGithubInstallationsResponse(w http.ResponseWriter) error
+}
+
+type ListGithubInstallations200JSONResponse GithubInstallationList
+
+func (response ListGithubInstallations200JSONResponse) VisitListGithubInstallationsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListGithubInstallationsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListGithubInstallationsdefaultJSONResponse) VisitListGithubInstallationsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type StartGithubInstallRequestObject struct {
+	Slug OrgSlug `json:"slug"`
+}
+
+type StartGithubInstallResponseObject interface {
+	VisitStartGithubInstallResponse(w http.ResponseWriter) error
+}
+
+type StartGithubInstall200JSONResponse GithubInstallStart
+
+func (response StartGithubInstall200JSONResponse) VisitStartGithubInstallResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type StartGithubInstalldefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response StartGithubInstalldefaultJSONResponse) VisitStartGithubInstallResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type DeleteGithubInstallationRequestObject struct {
+	Slug           OrgSlug        `json:"slug"`
+	InstallationId InstallationID `json:"installationId"`
+}
+
+type DeleteGithubInstallationResponseObject interface {
+	VisitDeleteGithubInstallationResponse(w http.ResponseWriter) error
+}
+
+type DeleteGithubInstallation204Response struct {
+}
+
+func (response DeleteGithubInstallation204Response) VisitDeleteGithubInstallationResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteGithubInstallationdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response DeleteGithubInstallationdefaultJSONResponse) VisitDeleteGithubInstallationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type ListGithubInstallationRepositoriesRequestObject struct {
+	Slug           OrgSlug        `json:"slug"`
+	InstallationId InstallationID `json:"installationId"`
+}
+
+type ListGithubInstallationRepositoriesResponseObject interface {
+	VisitListGithubInstallationRepositoriesResponse(w http.ResponseWriter) error
+}
+
+type ListGithubInstallationRepositories200JSONResponse GithubRepositoryList
+
+func (response ListGithubInstallationRepositories200JSONResponse) VisitListGithubInstallationRepositoriesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListGithubInstallationRepositoriesdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListGithubInstallationRepositoriesdefaultJSONResponse) VisitListGithubInstallationRepositoriesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetPingRequestObject struct {
@@ -634,9 +996,24 @@ type StrictServerInterface interface {
 	// Return the user associated with the CLI token
 	// (GET /api/cli/whoami)
 	CliWhoami(ctx context.Context, request CliWhoamiRequestObject) (CliWhoamiResponseObject, error)
+	// Finalize a GitHub App install handshake (Clerk session only)
+	// (POST /api/github/installations/complete)
+	CompleteGithubInstall(ctx context.Context, request CompleteGithubInstallRequestObject) (CompleteGithubInstallResponseObject, error)
 	// Liveness probe
 	// (GET /api/health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
+	// List GitHub App installations connected to this org
+	// (GET /api/orgs/{slug}/github/installations)
+	ListGithubInstallations(ctx context.Context, request ListGithubInstallationsRequestObject) (ListGithubInstallationsResponseObject, error)
+	// Begin a GitHub App install handshake
+	// (POST /api/orgs/{slug}/github/installations/start)
+	StartGithubInstall(ctx context.Context, request StartGithubInstallRequestObject) (StartGithubInstallResponseObject, error)
+	// Disconnect a GitHub App installation from this org
+	// (DELETE /api/orgs/{slug}/github/installations/{installationId})
+	DeleteGithubInstallation(ctx context.Context, request DeleteGithubInstallationRequestObject) (DeleteGithubInstallationResponseObject, error)
+	// List repositories accessible to a GitHub App installation
+	// (GET /api/orgs/{slug}/github/installations/{installationId}/repositories)
+	ListGithubInstallationRepositories(ctx context.Context, request ListGithubInstallationRepositoriesRequestObject) (ListGithubInstallationRepositoriesResponseObject, error)
 	// Echo a greeting
 	// (GET /api/ping)
 	GetPing(ctx context.Context, request GetPingRequestObject) (GetPingResponseObject, error)
@@ -807,6 +1184,37 @@ func (sh *strictHandler) CliWhoami(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// CompleteGithubInstall operation middleware
+func (sh *strictHandler) CompleteGithubInstall(w http.ResponseWriter, r *http.Request) {
+	var request CompleteGithubInstallRequestObject
+
+	var body CompleteGithubInstallJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CompleteGithubInstall(ctx, request.(CompleteGithubInstallRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CompleteGithubInstall")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CompleteGithubInstallResponseObject); ok {
+		if err := validResponse.VisitCompleteGithubInstallResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetHealth operation middleware
 func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 	var request GetHealthRequestObject
@@ -824,6 +1232,112 @@ func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetHealthResponseObject); ok {
 		if err := validResponse.VisitGetHealthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListGithubInstallations operation middleware
+func (sh *strictHandler) ListGithubInstallations(w http.ResponseWriter, r *http.Request, slug OrgSlug) {
+	var request ListGithubInstallationsRequestObject
+
+	request.Slug = slug
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListGithubInstallations(ctx, request.(ListGithubInstallationsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListGithubInstallations")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListGithubInstallationsResponseObject); ok {
+		if err := validResponse.VisitListGithubInstallationsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartGithubInstall operation middleware
+func (sh *strictHandler) StartGithubInstall(w http.ResponseWriter, r *http.Request, slug OrgSlug) {
+	var request StartGithubInstallRequestObject
+
+	request.Slug = slug
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartGithubInstall(ctx, request.(StartGithubInstallRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartGithubInstall")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartGithubInstallResponseObject); ok {
+		if err := validResponse.VisitStartGithubInstallResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteGithubInstallation operation middleware
+func (sh *strictHandler) DeleteGithubInstallation(w http.ResponseWriter, r *http.Request, slug OrgSlug, installationId InstallationID) {
+	var request DeleteGithubInstallationRequestObject
+
+	request.Slug = slug
+	request.InstallationId = installationId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteGithubInstallation(ctx, request.(DeleteGithubInstallationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteGithubInstallation")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteGithubInstallationResponseObject); ok {
+		if err := validResponse.VisitDeleteGithubInstallationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListGithubInstallationRepositories operation middleware
+func (sh *strictHandler) ListGithubInstallationRepositories(w http.ResponseWriter, r *http.Request, slug OrgSlug, installationId InstallationID) {
+	var request ListGithubInstallationRepositoriesRequestObject
+
+	request.Slug = slug
+	request.InstallationId = installationId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListGithubInstallationRepositories(ctx, request.(ListGithubInstallationRepositoriesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListGithubInstallationRepositories")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListGithubInstallationRepositoriesResponseObject); ok {
+		if err := validResponse.VisitListGithubInstallationRepositoriesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -860,31 +1374,49 @@ func (sh *strictHandler) GetPing(w http.ResponseWriter, r *http.Request, params 
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
+	"aOoeeikAAA==",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

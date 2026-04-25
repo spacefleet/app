@@ -16,6 +16,10 @@ type Tx struct {
 	CLIAuthCode *CLIAuthCodeClient
 	// CLIToken is the client for interacting with the CLIToken builders.
 	CLIToken *CLITokenClient
+	// GithubInstallState is the client for interacting with the GithubInstallState builders.
+	GithubInstallState *GithubInstallStateClient
+	// GithubInstallation is the client for interacting with the GithubInstallation builders.
+	GithubInstallation *GithubInstallationClient
 
 	// lazily loaded.
 	client     *Client
@@ -149,6 +153,8 @@ func (tx *Tx) Client() *Client {
 func (tx *Tx) init() {
 	tx.CLIAuthCode = NewCLIAuthCodeClient(tx.config)
 	tx.CLIToken = NewCLITokenClient(tx.config)
+	tx.GithubInstallState = NewGithubInstallStateClient(tx.config)
+	tx.GithubInstallation = NewGithubInstallationClient(tx.config)
 }
 
 // txDriver wraps the given dialect.Tx with a nop dialect.Driver implementation.

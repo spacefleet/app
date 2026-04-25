@@ -1,5 +1,11 @@
 import { OrganizationSwitcher, useOrganization, UserButton } from "@clerk/react";
-import { KeyRound, LayoutDashboard, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import {
+  GitBranch,
+  KeyRound,
+  LayoutDashboard,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import { useState } from "react";
 import { Link, NavLink, Outlet } from "react-router";
 import icon from "@/assets/spacefleet-icon.svg";
@@ -46,6 +52,14 @@ export function Layout() {
         >
           <nav className="flex-1 space-y-1 p-2">
             <SidebarLink to={dashboardHref} icon={LayoutDashboard} label="Dashboard" collapsed={collapsed} end />
+            {organization && (
+              <SidebarLink
+                to={`/${organization.slug}/integrations/github`}
+                icon={GitBranch}
+                label="GitHub"
+                collapsed={collapsed}
+              />
+            )}
             <SidebarLink to="/account/tokens" icon={KeyRound} label="Account tokens" collapsed={collapsed} />
           </nav>
           <button

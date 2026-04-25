@@ -30,7 +30,10 @@ func main() {
 		}
 	}
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
 	srv, err := server.New(cfg)
 	if err != nil {
 		log.Fatalf("server init: %v", err)

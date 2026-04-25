@@ -19,7 +19,10 @@ func runMigrate(args []string) {
 		os.Exit(2)
 	}
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
 	sqlDB, _, err := db.Open(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("migrate: %v", err)

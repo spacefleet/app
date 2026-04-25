@@ -14,6 +14,8 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/spacefleet/app/ent/cliauthcode"
 	"github.com/spacefleet/app/ent/clitoken"
+	"github.com/spacefleet/app/ent/githubinstallation"
+	"github.com/spacefleet/app/ent/githubinstallstate"
 )
 
 // ent aliases to avoid import conflicts in user's code.
@@ -74,8 +76,10 @@ var (
 func checkColumn(t, c string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
-			cliauthcode.Table: cliauthcode.ValidColumn,
-			clitoken.Table:    clitoken.ValidColumn,
+			cliauthcode.Table:        cliauthcode.ValidColumn,
+			clitoken.Table:           clitoken.ValidColumn,
+			githubinstallstate.Table: githubinstallstate.ValidColumn,
+			githubinstallation.Table: githubinstallation.ValidColumn,
 		})
 	})
 	return columnCheck(t, c)
