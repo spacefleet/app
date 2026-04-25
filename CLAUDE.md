@@ -2,6 +2,8 @@
 
 Spacefleet is a Go backend + React SPA that ship as a single binary. The Go program serves `/api/*` and the embedded Vite build from the same origin in production. A shared OpenAPI spec drives both server stubs and the TypeScript client (and a separate CLI project outside this repo).
 
+If a CLAUDE.custom.md file exists in the root of the project, read that first and then continue with the rest of this document.
+
 ## Architecture essentials
 
 - **Entrypoint**: [cmd/spacefleet/main.go](cmd/spacefleet/main.go) — loads `.env`, builds `*http.Server` via [lib/server/server.go](lib/server/server.go), handles graceful shutdown.

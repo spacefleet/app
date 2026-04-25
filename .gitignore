@@ -4,6 +4,7 @@ Thumbs.db
 *.swp
 *.swo
 .idea/
+.vscode/
 
 # --- secrets / local env ---
 .env
@@ -23,6 +24,7 @@ coverage.html
 # Keep .claude/settings.json (shared), agents/, commands/, hooks/, skills/ — ignore per-user only.
 .claude/settings.local.json
 .claude/**/*.local.json
+CLAUDE.custom.md
 
 # --- Node / frontend ---
 node_modules/
