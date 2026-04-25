@@ -224,6 +224,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/orgs/{slug}/aws/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List AWS cloud accounts connected to this org */
+        get: operations["listAwsAccounts"];
+        put?: never;
+        /**
+         * Begin AWS cloud-account onboarding
+         * @description Mints an external ID, persists a pending cloud_accounts row, and
+         *     returns the CloudFormation Quick Create URL the customer should
+         *     open to launch the integration role. The external ID is shown
+         *     exactly once — store it client-side until completion if the
+         *     customer hands the URL to a third party.
+         */
+        post: operations["startAwsAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs/{slug}/aws/accounts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a single AWS cloud account */
+        get: operations["getAwsAccount"];
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect an AWS cloud account
+         * @description Drops Spacefleet's record. The CloudFormation stack in the
+         *     customer's account is left in place — they own teardown.
+         */
+        delete: operations["deleteAwsAccount"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs/{slug}/aws/accounts/{id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finalize AWS onboarding by submitting the role ARN
+         * @description Customer (or whoever launched the stack) provides the role ARN
+         *     from the stack's Outputs.RoleArn. The server runs an STS probe
+         *     against (role_arn, external_id) and flips status to connected on
+         *     success or error on failure.
+         */
+        post: operations["completeAwsAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs/{slug}/aws/accounts/{id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Re-run the verification probe against a cloud account */
+        post: operations["verifyAwsAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cli/whoami": {
         parameters: {
             query?: never;
@@ -354,6 +441,58 @@ export interface components {
         GithubRepositoryList: {
             repositories: components["schemas"]["GithubRepository"][];
         };
+        CloudAccount: {
+            /** Format: uuid */
+            id: string;
+            /** @description Cloud provider — only "aws" today. */
+            provider: string;
+            label: string;
+            /** @description 12-digit AWS account ID (empty until onboarding completes). */
+            account_id?: string | null;
+            role_arn?: string | null;
+            region?: string | null;
+            /** @description pending | connected | error | disabled. */
+            status: string;
+            /** Format: date-time */
+            last_verified_at?: string | null;
+            last_verification_error?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CloudAccountList: {
+            accounts: components["schemas"]["CloudAccount"][];
+        };
+        CloudAccountStartRequest: {
+            /** @description Human-friendly name like "acme-prod". Unique per org. */
+            label: string;
+            /** @description Optional default region for the Quick Create link. */
+            region?: string;
+        };
+        CloudAccountStartResponse: {
+            account: components["schemas"]["CloudAccount"];
+            /**
+             * @description Returned exactly once. Treat as a secret. Embedded in the
+             *     CloudFormation trust policy and presented on every AssumeRole.
+             */
+            external_id: string;
+            /**
+             * Format: uri
+             * @description CloudFormation Quick Create URL with the platform account ID
+             *     and external ID pre-filled. Send the customer here.
+             */
+            quick_create_url: string;
+            /**
+             * @description The AWS account ID Spacefleet is running in — what the
+             *     customer's IAM trust policy will allow AssumeRole from.
+             */
+            platform_account_id: string;
+        };
+        CloudAccountCompleteRequest: {
+            /** @description From the stack's Outputs.RoleArn. */
+            role_arn: string;
+        };
     };
     responses: {
         /** @description Error response */
@@ -369,6 +508,7 @@ export interface components {
     parameters: {
         OrgSlug: string;
         InstallationID: number;
+        CloudAccountID: string;
     };
     requestBodies: never;
     headers: never;
@@ -623,6 +763,154 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GithubRepositoryList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAwsAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cloud accounts (newest first) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudAccountList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startAwsAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloudAccountStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Pending cloud account + onboarding URL */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudAccountStartResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAwsAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+                id: components["parameters"]["CloudAccountID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cloud account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudAccount"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteAwsAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+                id: components["parameters"]["CloudAccountID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected (idempotent) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    completeAwsAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+                id: components["parameters"]["CloudAccountID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloudAccountCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Onboarding completed (verification ran) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudAccount"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    verifyAwsAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+                id: components["parameters"]["CloudAccountID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verification ran (status reflects the result) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudAccount"];
                 };
             };
             default: components["responses"]["Error"];

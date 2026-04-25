@@ -17,6 +17,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"github.com/spacefleet/app/ent/cliauthcode"
 	"github.com/spacefleet/app/ent/clitoken"
+	"github.com/spacefleet/app/ent/cloudaccount"
 	"github.com/spacefleet/app/ent/githubinstallation"
 	"github.com/spacefleet/app/ent/githubinstallstate"
 )
@@ -30,6 +31,8 @@ type Client struct {
 	CLIAuthCode *CLIAuthCodeClient
 	// CLIToken is the client for interacting with the CLIToken builders.
 	CLIToken *CLITokenClient
+	// CloudAccount is the client for interacting with the CloudAccount builders.
+	CloudAccount *CloudAccountClient
 	// GithubInstallState is the client for interacting with the GithubInstallState builders.
 	GithubInstallState *GithubInstallStateClient
 	// GithubInstallation is the client for interacting with the GithubInstallation builders.
@@ -47,6 +50,7 @@ func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
 	c.CLIAuthCode = NewCLIAuthCodeClient(c.config)
 	c.CLIToken = NewCLITokenClient(c.config)
+	c.CloudAccount = NewCloudAccountClient(c.config)
 	c.GithubInstallState = NewGithubInstallStateClient(c.config)
 	c.GithubInstallation = NewGithubInstallationClient(c.config)
 }
@@ -143,6 +147,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		config:             cfg,
 		CLIAuthCode:        NewCLIAuthCodeClient(cfg),
 		CLIToken:           NewCLITokenClient(cfg),
+		CloudAccount:       NewCloudAccountClient(cfg),
 		GithubInstallState: NewGithubInstallStateClient(cfg),
 		GithubInstallation: NewGithubInstallationClient(cfg),
 	}, nil
@@ -166,6 +171,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		config:             cfg,
 		CLIAuthCode:        NewCLIAuthCodeClient(cfg),
 		CLIToken:           NewCLITokenClient(cfg),
+		CloudAccount:       NewCloudAccountClient(cfg),
 		GithubInstallState: NewGithubInstallStateClient(cfg),
 		GithubInstallation: NewGithubInstallationClient(cfg),
 	}, nil
@@ -198,6 +204,7 @@ func (c *Client) Close() error {
 func (c *Client) Use(hooks ...Hook) {
 	c.CLIAuthCode.Use(hooks...)
 	c.CLIToken.Use(hooks...)
+	c.CloudAccount.Use(hooks...)
 	c.GithubInstallState.Use(hooks...)
 	c.GithubInstallation.Use(hooks...)
 }
@@ -207,6 +214,7 @@ func (c *Client) Use(hooks ...Hook) {
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	c.CLIAuthCode.Intercept(interceptors...)
 	c.CLIToken.Intercept(interceptors...)
+	c.CloudAccount.Intercept(interceptors...)
 	c.GithubInstallState.Intercept(interceptors...)
 	c.GithubInstallation.Intercept(interceptors...)
 }
@@ -218,6 +226,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.CLIAuthCode.mutate(ctx, m)
 	case *CLITokenMutation:
 		return c.CLIToken.mutate(ctx, m)
+	case *CloudAccountMutation:
+		return c.CloudAccount.mutate(ctx, m)
 	case *GithubInstallStateMutation:
 		return c.GithubInstallState.mutate(ctx, m)
 	case *GithubInstallationMutation:
@@ -493,6 +503,139 @@ func (c *CLITokenClient) mutate(ctx context.Context, m *CLITokenMutation) (Value
 	}
 }
 
+// CloudAccountClient is a client for the CloudAccount schema.
+type CloudAccountClient struct {
+	config
+}
+
+// NewCloudAccountClient returns a client for the CloudAccount from the given config.
+func NewCloudAccountClient(c config) *CloudAccountClient {
+	return &CloudAccountClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `cloudaccount.Hooks(f(g(h())))`.
+func (c *CloudAccountClient) Use(hooks ...Hook) {
+	c.hooks.CloudAccount = append(c.hooks.CloudAccount, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `cloudaccount.Intercept(f(g(h())))`.
+func (c *CloudAccountClient) Intercept(interceptors ...Interceptor) {
+	c.inters.CloudAccount = append(c.inters.CloudAccount, interceptors...)
+}
+
+// Create returns a builder for creating a CloudAccount entity.
+func (c *CloudAccountClient) Create() *CloudAccountCreate {
+	mutation := newCloudAccountMutation(c.config, OpCreate)
+	return &CloudAccountCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of CloudAccount entities.
+func (c *CloudAccountClient) CreateBulk(builders ...*CloudAccountCreate) *CloudAccountCreateBulk {
+	return &CloudAccountCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *CloudAccountClient) MapCreateBulk(slice any, setFunc func(*CloudAccountCreate, int)) *CloudAccountCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &CloudAccountCreateBulk{err: fmt.Errorf("calling to CloudAccountClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*CloudAccountCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &CloudAccountCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for CloudAccount.
+func (c *CloudAccountClient) Update() *CloudAccountUpdate {
+	mutation := newCloudAccountMutation(c.config, OpUpdate)
+	return &CloudAccountUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *CloudAccountClient) UpdateOne(_m *CloudAccount) *CloudAccountUpdateOne {
+	mutation := newCloudAccountMutation(c.config, OpUpdateOne, withCloudAccount(_m))
+	return &CloudAccountUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *CloudAccountClient) UpdateOneID(id uuid.UUID) *CloudAccountUpdateOne {
+	mutation := newCloudAccountMutation(c.config, OpUpdateOne, withCloudAccountID(id))
+	return &CloudAccountUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for CloudAccount.
+func (c *CloudAccountClient) Delete() *CloudAccountDelete {
+	mutation := newCloudAccountMutation(c.config, OpDelete)
+	return &CloudAccountDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *CloudAccountClient) DeleteOne(_m *CloudAccount) *CloudAccountDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *CloudAccountClient) DeleteOneID(id uuid.UUID) *CloudAccountDeleteOne {
+	builder := c.Delete().Where(cloudaccount.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &CloudAccountDeleteOne{builder}
+}
+
+// Query returns a query builder for CloudAccount.
+func (c *CloudAccountClient) Query() *CloudAccountQuery {
+	return &CloudAccountQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeCloudAccount},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a CloudAccount entity by its id.
+func (c *CloudAccountClient) Get(ctx context.Context, id uuid.UUID) (*CloudAccount, error) {
+	return c.Query().Where(cloudaccount.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *CloudAccountClient) GetX(ctx context.Context, id uuid.UUID) *CloudAccount {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *CloudAccountClient) Hooks() []Hook {
+	return c.hooks.CloudAccount
+}
+
+// Interceptors returns the client interceptors.
+func (c *CloudAccountClient) Interceptors() []Interceptor {
+	return c.inters.CloudAccount
+}
+
+func (c *CloudAccountClient) mutate(ctx context.Context, m *CloudAccountMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&CloudAccountCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&CloudAccountUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&CloudAccountUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&CloudAccountDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown CloudAccount mutation op: %q", m.Op())
+	}
+}
+
 // GithubInstallStateClient is a client for the GithubInstallState schema.
 type GithubInstallStateClient struct {
 	config
@@ -762,9 +905,11 @@ func (c *GithubInstallationClient) mutate(ctx context.Context, m *GithubInstalla
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		CLIAuthCode, CLIToken, GithubInstallState, GithubInstallation []ent.Hook
+		CLIAuthCode, CLIToken, CloudAccount, GithubInstallState,
+		GithubInstallation []ent.Hook
 	}
 	inters struct {
-		CLIAuthCode, CLIToken, GithubInstallState, GithubInstallation []ent.Interceptor
+		CLIAuthCode, CLIToken, CloudAccount, GithubInstallState,
+		GithubInstallation []ent.Interceptor
 	}
 )

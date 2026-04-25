@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/spacefleet/app/ent/cliauthcode"
 	"github.com/spacefleet/app/ent/clitoken"
+	"github.com/spacefleet/app/ent/cloudaccount"
 	"github.com/spacefleet/app/ent/githubinstallation"
 	"github.com/spacefleet/app/ent/githubinstallstate"
 	"github.com/spacefleet/app/ent/schema"
@@ -93,6 +94,46 @@ func init() {
 	clitokenDescID := clitokenFields[0].Descriptor()
 	// clitoken.DefaultID holds the default value on creation for the id field.
 	clitoken.DefaultID = clitokenDescID.Default.(func() uuid.UUID)
+	cloudaccountFields := schema.CloudAccount{}.Fields()
+	_ = cloudaccountFields
+	// cloudaccountDescOrgSlug is the schema descriptor for org_slug field.
+	cloudaccountDescOrgSlug := cloudaccountFields[1].Descriptor()
+	// cloudaccount.OrgSlugValidator is a validator for the "org_slug" field. It is called by the builders before save.
+	cloudaccount.OrgSlugValidator = cloudaccountDescOrgSlug.Validators[0].(func(string) error)
+	// cloudaccountDescProvider is the schema descriptor for provider field.
+	cloudaccountDescProvider := cloudaccountFields[2].Descriptor()
+	// cloudaccount.DefaultProvider holds the default value on creation for the provider field.
+	cloudaccount.DefaultProvider = cloudaccountDescProvider.Default.(string)
+	// cloudaccount.ProviderValidator is a validator for the "provider" field. It is called by the builders before save.
+	cloudaccount.ProviderValidator = cloudaccountDescProvider.Validators[0].(func(string) error)
+	// cloudaccountDescLabel is the schema descriptor for label field.
+	cloudaccountDescLabel := cloudaccountFields[3].Descriptor()
+	// cloudaccount.LabelValidator is a validator for the "label" field. It is called by the builders before save.
+	cloudaccount.LabelValidator = cloudaccountDescLabel.Validators[0].(func(string) error)
+	// cloudaccountDescExternalID is the schema descriptor for external_id field.
+	cloudaccountDescExternalID := cloudaccountFields[6].Descriptor()
+	// cloudaccount.ExternalIDValidator is a validator for the "external_id" field. It is called by the builders before save.
+	cloudaccount.ExternalIDValidator = cloudaccountDescExternalID.Validators[0].(func(string) error)
+	// cloudaccountDescStatus is the schema descriptor for status field.
+	cloudaccountDescStatus := cloudaccountFields[8].Descriptor()
+	// cloudaccount.DefaultStatus holds the default value on creation for the status field.
+	cloudaccount.DefaultStatus = cloudaccountDescStatus.Default.(string)
+	// cloudaccount.StatusValidator is a validator for the "status" field. It is called by the builders before save.
+	cloudaccount.StatusValidator = cloudaccountDescStatus.Validators[0].(func(string) error)
+	// cloudaccountDescCreatedAt is the schema descriptor for created_at field.
+	cloudaccountDescCreatedAt := cloudaccountFields[11].Descriptor()
+	// cloudaccount.DefaultCreatedAt holds the default value on creation for the created_at field.
+	cloudaccount.DefaultCreatedAt = cloudaccountDescCreatedAt.Default.(func() time.Time)
+	// cloudaccountDescUpdatedAt is the schema descriptor for updated_at field.
+	cloudaccountDescUpdatedAt := cloudaccountFields[12].Descriptor()
+	// cloudaccount.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	cloudaccount.DefaultUpdatedAt = cloudaccountDescUpdatedAt.Default.(func() time.Time)
+	// cloudaccount.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	cloudaccount.UpdateDefaultUpdatedAt = cloudaccountDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// cloudaccountDescID is the schema descriptor for id field.
+	cloudaccountDescID := cloudaccountFields[0].Descriptor()
+	// cloudaccount.DefaultID holds the default value on creation for the id field.
+	cloudaccount.DefaultID = cloudaccountDescID.Default.(func() uuid.UUID)
 	githubinstallstateFields := schema.GithubInstallState{}.Fields()
 	_ = githubinstallstateFields
 	// githubinstallstateDescStateHash is the schema descriptor for state_hash field.

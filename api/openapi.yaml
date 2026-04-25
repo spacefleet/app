@@ -218,6 +218,124 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/orgs/{slug}/aws/accounts:
+    get:
+      summary: List AWS cloud accounts connected to this org
+      operationId: listAwsAccounts
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+      responses:
+        "200":
+          description: Cloud accounts (newest first)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudAccountList"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Begin AWS cloud-account onboarding
+      description: |
+        Mints an external ID, persists a pending cloud_accounts row, and
+        returns the CloudFormation Quick Create URL the customer should
+        open to launch the integration role. The external ID is shown
+        exactly once — store it client-side until completion if the
+        customer hands the URL to a third party.
+      operationId: startAwsAccount
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloudAccountStartRequest"
+      responses:
+        "200":
+          description: Pending cloud account + onboarding URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudAccountStartResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/orgs/{slug}/aws/accounts/{id}:
+    get:
+      summary: Get a single AWS cloud account
+      operationId: getAwsAccount
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+        - $ref: "#/components/parameters/CloudAccountID"
+      responses:
+        "200":
+          description: Cloud account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudAccount"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      summary: Disconnect an AWS cloud account
+      description: |
+        Drops Spacefleet's record. The CloudFormation stack in the
+        customer's account is left in place — they own teardown.
+      operationId: deleteAwsAccount
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+        - $ref: "#/components/parameters/CloudAccountID"
+      responses:
+        "204":
+          description: Disconnected (idempotent)
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/orgs/{slug}/aws/accounts/{id}/complete:
+    post:
+      summary: Finalize AWS onboarding by submitting the role ARN
+      description: |
+        Customer (or whoever launched the stack) provides the role ARN
+        from the stack's Outputs.RoleArn. The server runs an STS probe
+        against (role_arn, external_id) and flips status to connected on
+        success or error on failure.
+      operationId: completeAwsAccount
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+        - $ref: "#/components/parameters/CloudAccountID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloudAccountCompleteRequest"
+      responses:
+        "200":
+          description: Onboarding completed (verification ran)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudAccount"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/orgs/{slug}/aws/accounts/{id}/verify:
+    post:
+      summary: Re-run the verification probe against a cloud account
+      operationId: verifyAwsAccount
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+        - $ref: "#/components/parameters/CloudAccountID"
+      responses:
+        "200":
+          description: Verification ran (status reflects the result)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloudAccount"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/cli/whoami:
     get:
       summary: Return the user associated with the CLI token
@@ -450,6 +568,104 @@ components:
           items:
             $ref: "#/components/schemas/GithubRepository"
 
+    CloudAccount:
+      type: object
+      required:
+        [
+          id,
+          provider,
+          label,
+          status,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+          description: Cloud provider — only "aws" today.
+        label:
+          type: string
+        account_id:
+          type: string
+          nullable: true
+          description: 12-digit AWS account ID (empty until onboarding completes).
+        role_arn:
+          type: string
+          nullable: true
+        region:
+          type: string
+          nullable: true
+        status:
+          type: string
+          description: pending | connected | error | disabled.
+        last_verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_verification_error:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CloudAccountList:
+      type: object
+      required: [accounts]
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/CloudAccount"
+
+    CloudAccountStartRequest:
+      type: object
+      required: [label]
+      properties:
+        label:
+          type: string
+          description: Human-friendly name like "acme-prod". Unique per org.
+        region:
+          type: string
+          description: Optional default region for the Quick Create link.
+
+    CloudAccountStartResponse:
+      type: object
+      required: [account, external_id, quick_create_url, platform_account_id]
+      properties:
+        account:
+          $ref: "#/components/schemas/CloudAccount"
+        external_id:
+          type: string
+          description: |
+            Returned exactly once. Treat as a secret. Embedded in the
+            CloudFormation trust policy and presented on every AssumeRole.
+        quick_create_url:
+          type: string
+          format: uri
+          description: |
+            CloudFormation Quick Create URL with the platform account ID
+            and external ID pre-filled. Send the customer here.
+        platform_account_id:
+          type: string
+          description: |
+            The AWS account ID Spacefleet is running in — what the
+            customer's IAM trust policy will allow AssumeRole from.
+
+    CloudAccountCompleteRequest:
+      type: object
+      required: [role_arn]
+      properties:
+        role_arn:
+          type: string
+          description: From the stack's Outputs.RoleArn.
+
   parameters:
     OrgSlug:
       in: path
@@ -464,6 +680,13 @@ components:
       schema:
         type: integer
         format: int64
+    CloudAccountID:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
 
   responses:
     Error:

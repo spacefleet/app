@@ -1,5 +1,6 @@
 import { OrganizationSwitcher, useOrganization, UserButton } from "@clerk/react";
 import {
+  Cloud,
   GitBranch,
   KeyRound,
   LayoutDashboard,
@@ -53,12 +54,20 @@ export function Layout() {
           <nav className="flex-1 space-y-1 p-2">
             <SidebarLink to={dashboardHref} icon={LayoutDashboard} label="Dashboard" collapsed={collapsed} end />
             {organization && (
-              <SidebarLink
-                to={`/${organization.slug}/integrations/github`}
-                icon={GitBranch}
-                label="GitHub"
-                collapsed={collapsed}
-              />
+              <>
+                <SidebarLink
+                  to={`/${organization.slug}/integrations/github`}
+                  icon={GitBranch}
+                  label="GitHub"
+                  collapsed={collapsed}
+                />
+                <SidebarLink
+                  to={`/${organization.slug}/integrations/aws`}
+                  icon={Cloud}
+                  label="AWS"
+                  collapsed={collapsed}
+                />
+              </>
             )}
             <SidebarLink to="/account/tokens" icon={KeyRound} label="Account tokens" collapsed={collapsed} />
           </nav>

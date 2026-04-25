@@ -7,6 +7,7 @@ import { AccountTokens } from "./routes/AccountTokens";
 import { CliAuth } from "./routes/CliAuth";
 import { Dashboard } from "./routes/Dashboard";
 import { GitHubCallback } from "./routes/GitHubCallback";
+import { IntegrationsAWS } from "./routes/IntegrationsAWS";
 import { IntegrationsGitHub } from "./routes/IntegrationsGitHub";
 import { NotFound } from "./routes/NotFound";
 import { RootRedirect } from "./routes/RootRedirect";
@@ -41,6 +42,10 @@ export function App() {
               <Route
                 path="integrations/github"
                 element={<IntegrationsGitHub />}
+              />
+              <Route
+                path="integrations/aws"
+                element={<IntegrationsAWS />}
               />
             </Route>
             <Route path="*" element={<NotFound />} />

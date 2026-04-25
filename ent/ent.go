@@ -14,6 +14,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/spacefleet/app/ent/cliauthcode"
 	"github.com/spacefleet/app/ent/clitoken"
+	"github.com/spacefleet/app/ent/cloudaccount"
 	"github.com/spacefleet/app/ent/githubinstallation"
 	"github.com/spacefleet/app/ent/githubinstallstate"
 )
@@ -78,6 +79,7 @@ func checkColumn(t, c string) error {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
 			cliauthcode.Table:        cliauthcode.ValidColumn,
 			clitoken.Table:           clitoken.ValidColumn,
+			cloudaccount.Table:       cloudaccount.ValidColumn,
 			githubinstallstate.Table: githubinstallstate.ValidColumn,
 			githubinstallation.Table: githubinstallation.ValidColumn,
 		})

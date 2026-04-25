@@ -33,6 +33,18 @@ func (f CLITokenFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, er
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.CLITokenMutation", m)
 }
 
+// The CloudAccountFunc type is an adapter to allow the use of ordinary
+// function as CloudAccount mutator.
+type CloudAccountFunc func(context.Context, *ent.CloudAccountMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f CloudAccountFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.CloudAccountMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.CloudAccountMutation", m)
+}
+
 // The GithubInstallStateFunc type is an adapter to allow the use of ordinary
 // function as GithubInstallState mutator.
 type GithubInstallStateFunc func(context.Context, *ent.GithubInstallStateMutation) (ent.Value, error)

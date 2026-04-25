@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	awsint "github.com/spacefleet/app/lib/aws"
 	"github.com/spacefleet/app/lib/auth"
 	"github.com/spacefleet/app/lib/cli"
 	"github.com/spacefleet/app/lib/github"
@@ -16,14 +17,15 @@ import (
 type Server struct {
 	cli *cli.Service
 	gh  *github.Service
+	aws *awsint.Service
 }
 
-// NewServer accepts the runtime services this API depends on. Either may
-// be nil — features whose service is missing return a clear "not
-// configured" error instead of panicking, which keeps route-level tests
-// usable without a database or GitHub App.
-func NewServer(cliSvc *cli.Service, ghSvc *github.Service) *Server {
-	return &Server{cli: cliSvc, gh: ghSvc}
+// NewServer accepts the runtime services this API depends on. Any of
+// them may be nil — features whose service is missing return a clear
+// "not configured" error instead of panicking, which keeps route-level
+// tests usable without a database, GitHub App, or AWS credentials.
+func NewServer(cliSvc *cli.Service, ghSvc *github.Service, awsSvc *awsint.Service) *Server {
+	return &Server{cli: cliSvc, gh: ghSvc, aws: awsSvc}
 }
 
 var _ StrictServerInterface = (*Server)(nil)

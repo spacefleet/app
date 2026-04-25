@@ -111,6 +111,63 @@ type CliWhoami struct {
 // CliWhoamiSource defines model for CliWhoami.Source.
 type CliWhoamiSource string
 
+// CloudAccount defines model for CloudAccount.
+type CloudAccount struct {
+	// AccountId 12-digit AWS account ID (empty until onboarding completes).
+	AccountId             *string            `json:"account_id,omitempty"`
+	CreatedAt             time.Time          `json:"created_at"`
+	Id                    openapi_types.UUID `json:"id"`
+	Label                 string             `json:"label"`
+	LastVerificationError *string            `json:"last_verification_error,omitempty"`
+	LastVerifiedAt        *time.Time         `json:"last_verified_at,omitempty"`
+
+	// Provider Cloud provider — only "aws" today.
+	Provider string  `json:"provider"`
+	Region   *string `json:"region,omitempty"`
+	RoleArn  *string `json:"role_arn,omitempty"`
+
+	// Status pending | connected | error | disabled.
+	Status    string    `json:"status"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// CloudAccountCompleteRequest defines model for CloudAccountCompleteRequest.
+type CloudAccountCompleteRequest struct {
+	// RoleArn From the stack's Outputs.RoleArn.
+	RoleArn string `json:"role_arn"`
+}
+
+// CloudAccountList defines model for CloudAccountList.
+type CloudAccountList struct {
+	Accounts []CloudAccount `json:"accounts"`
+}
+
+// CloudAccountStartRequest defines model for CloudAccountStartRequest.
+type CloudAccountStartRequest struct {
+	// Label Human-friendly name like "acme-prod". Unique per org.
+	Label string `json:"label"`
+
+	// Region Optional default region for the Quick Create link.
+	Region *string `json:"region,omitempty"`
+}
+
+// CloudAccountStartResponse defines model for CloudAccountStartResponse.
+type CloudAccountStartResponse struct {
+	Account CloudAccount `json:"account"`
+
+	// ExternalId Returned exactly once. Treat as a secret. Embedded in the
+	// CloudFormation trust policy and presented on every AssumeRole.
+	ExternalId string `json:"external_id"`
+
+	// PlatformAccountId The AWS account ID Spacefleet is running in — what the
+	// customer's IAM trust policy will allow AssumeRole from.
+	PlatformAccountId string `json:"platform_account_id"`
+
+	// QuickCreateUrl CloudFormation Quick Create URL with the platform account ID
+	// and external ID pre-filled. Send the customer here.
+	QuickCreateUrl string `json:"quick_create_url"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Code    string `json:"code"`
@@ -185,6 +242,9 @@ type Health struct {
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
 
+// CloudAccountID defines model for CloudAccountID.
+type CloudAccountID = openapi_types.UUID
+
 // InstallationID defines model for InstallationID.
 type InstallationID = int64
 
@@ -204,6 +264,12 @@ type ExchangeCliAuthJSONRequestBody = CliExchangeRequest
 
 // CompleteGithubInstallJSONRequestBody defines body for CompleteGithubInstall for application/json ContentType.
 type CompleteGithubInstallJSONRequestBody = GithubInstallCompleteRequest
+
+// StartAwsAccountJSONRequestBody defines body for StartAwsAccount for application/json ContentType.
+type StartAwsAccountJSONRequestBody = CloudAccountStartRequest
+
+// CompleteAwsAccountJSONRequestBody defines body for CompleteAwsAccount for application/json ContentType.
+type CompleteAwsAccountJSONRequestBody = CloudAccountCompleteRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -228,6 +294,24 @@ type ServerInterface interface {
 	// Liveness probe
 	// (GET /api/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// List AWS cloud accounts connected to this org
+	// (GET /api/orgs/{slug}/aws/accounts)
+	ListAwsAccounts(w http.ResponseWriter, r *http.Request, slug OrgSlug)
+	// Begin AWS cloud-account onboarding
+	// (POST /api/orgs/{slug}/aws/accounts)
+	StartAwsAccount(w http.ResponseWriter, r *http.Request, slug OrgSlug)
+	// Disconnect an AWS cloud account
+	// (DELETE /api/orgs/{slug}/aws/accounts/{id})
+	DeleteAwsAccount(w http.ResponseWriter, r *http.Request, slug OrgSlug, id CloudAccountID)
+	// Get a single AWS cloud account
+	// (GET /api/orgs/{slug}/aws/accounts/{id})
+	GetAwsAccount(w http.ResponseWriter, r *http.Request, slug OrgSlug, id CloudAccountID)
+	// Finalize AWS onboarding by submitting the role ARN
+	// (POST /api/orgs/{slug}/aws/accounts/{id}/complete)
+	CompleteAwsAccount(w http.ResponseWriter, r *http.Request, slug OrgSlug, id CloudAccountID)
+	// Re-run the verification probe against a cloud account
+	// (POST /api/orgs/{slug}/aws/accounts/{id}/verify)
+	VerifyAwsAccount(w http.ResponseWriter, r *http.Request, slug OrgSlug, id CloudAccountID)
 	// List GitHub App installations connected to this org
 	// (GET /api/orgs/{slug}/github/installations)
 	ListGithubInstallations(w http.ResponseWriter, r *http.Request, slug OrgSlug)
@@ -354,6 +438,192 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAwsAccounts operation middleware
+func (siw *ServerInterfaceWrapper) ListAwsAccounts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAwsAccounts(w, r, slug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartAwsAccount operation middleware
+func (siw *ServerInterfaceWrapper) StartAwsAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartAwsAccount(w, r, slug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAwsAccount operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAwsAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "id" -------------
+	var id CloudAccountID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAwsAccount(w, r, slug, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAwsAccount operation middleware
+func (siw *ServerInterfaceWrapper) GetAwsAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "id" -------------
+	var id CloudAccountID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAwsAccount(w, r, slug, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CompleteAwsAccount operation middleware
+func (siw *ServerInterfaceWrapper) CompleteAwsAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "id" -------------
+	var id CloudAccountID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteAwsAccount(w, r, slug, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// VerifyAwsAccount operation middleware
+func (siw *ServerInterfaceWrapper) VerifyAwsAccount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "id" -------------
+	var id CloudAccountID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.VerifyAwsAccount(w, r, slug, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -635,6 +905,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/api/cli/whoami", wrapper.CliWhoami)
 	m.HandleFunc("POST "+options.BaseURL+"/api/github/installations/complete", wrapper.CompleteGithubInstall)
 	m.HandleFunc("GET "+options.BaseURL+"/api/health", wrapper.GetHealth)
+	m.HandleFunc("GET "+options.BaseURL+"/api/orgs/{slug}/aws/accounts", wrapper.ListAwsAccounts)
+	m.HandleFunc("POST "+options.BaseURL+"/api/orgs/{slug}/aws/accounts", wrapper.StartAwsAccount)
+	m.HandleFunc("DELETE "+options.BaseURL+"/api/orgs/{slug}/aws/accounts/{id}", wrapper.DeleteAwsAccount)
+	m.HandleFunc("GET "+options.BaseURL+"/api/orgs/{slug}/aws/accounts/{id}", wrapper.GetAwsAccount)
+	m.HandleFunc("POST "+options.BaseURL+"/api/orgs/{slug}/aws/accounts/{id}/complete", wrapper.CompleteAwsAccount)
+	m.HandleFunc("POST "+options.BaseURL+"/api/orgs/{slug}/aws/accounts/{id}/verify", wrapper.VerifyAwsAccount)
 	m.HandleFunc("GET "+options.BaseURL+"/api/orgs/{slug}/github/installations", wrapper.ListGithubInstallations)
 	m.HandleFunc("POST "+options.BaseURL+"/api/orgs/{slug}/github/installations/start", wrapper.StartGithubInstall)
 	m.HandleFunc("DELETE "+options.BaseURL+"/api/orgs/{slug}/github/installations/{installationId}", wrapper.DeleteGithubInstallation)
@@ -833,6 +1109,185 @@ func (response GetHealth200JSONResponse) VisitGetHealthResponse(w http.ResponseW
 	return json.NewEncoder(w).Encode(response)
 }
 
+type ListAwsAccountsRequestObject struct {
+	Slug OrgSlug `json:"slug"`
+}
+
+type ListAwsAccountsResponseObject interface {
+	VisitListAwsAccountsResponse(w http.ResponseWriter) error
+}
+
+type ListAwsAccounts200JSONResponse CloudAccountList
+
+func (response ListAwsAccounts200JSONResponse) VisitListAwsAccountsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListAwsAccountsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListAwsAccountsdefaultJSONResponse) VisitListAwsAccountsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type StartAwsAccountRequestObject struct {
+	Slug OrgSlug `json:"slug"`
+	Body *StartAwsAccountJSONRequestBody
+}
+
+type StartAwsAccountResponseObject interface {
+	VisitStartAwsAccountResponse(w http.ResponseWriter) error
+}
+
+type StartAwsAccount200JSONResponse CloudAccountStartResponse
+
+func (response StartAwsAccount200JSONResponse) VisitStartAwsAccountResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type StartAwsAccountdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response StartAwsAccountdefaultJSONResponse) VisitStartAwsAccountResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type DeleteAwsAccountRequestObject struct {
+	Slug OrgSlug        `json:"slug"`
+	Id   CloudAccountID `json:"id"`
+}
+
+type DeleteAwsAccountResponseObject interface {
+	VisitDeleteAwsAccountResponse(w http.ResponseWriter) error
+}
+
+type DeleteAwsAccount204Response struct {
+}
+
+func (response DeleteAwsAccount204Response) VisitDeleteAwsAccountResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteAwsAccountdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response DeleteAwsAccountdefaultJSONResponse) VisitDeleteAwsAccountResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type GetAwsAccountRequestObject struct {
+	Slug OrgSlug        `json:"slug"`
+	Id   CloudAccountID `json:"id"`
+}
+
+type GetAwsAccountResponseObject interface {
+	VisitGetAwsAccountResponse(w http.ResponseWriter) error
+}
+
+type GetAwsAccount200JSONResponse CloudAccount
+
+func (response GetAwsAccount200JSONResponse) VisitGetAwsAccountResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetAwsAccountdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetAwsAccountdefaultJSONResponse) VisitGetAwsAccountResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type CompleteAwsAccountRequestObject struct {
+	Slug OrgSlug        `json:"slug"`
+	Id   CloudAccountID `json:"id"`
+	Body *CompleteAwsAccountJSONRequestBody
+}
+
+type CompleteAwsAccountResponseObject interface {
+	VisitCompleteAwsAccountResponse(w http.ResponseWriter) error
+}
+
+type CompleteAwsAccount200JSONResponse CloudAccount
+
+func (response CompleteAwsAccount200JSONResponse) VisitCompleteAwsAccountResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CompleteAwsAccountdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response CompleteAwsAccountdefaultJSONResponse) VisitCompleteAwsAccountResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type VerifyAwsAccountRequestObject struct {
+	Slug OrgSlug        `json:"slug"`
+	Id   CloudAccountID `json:"id"`
+}
+
+type VerifyAwsAccountResponseObject interface {
+	VisitVerifyAwsAccountResponse(w http.ResponseWriter) error
+}
+
+type VerifyAwsAccount200JSONResponse CloudAccount
+
+func (response VerifyAwsAccount200JSONResponse) VisitVerifyAwsAccountResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type VerifyAwsAccountdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response VerifyAwsAccountdefaultJSONResponse) VisitVerifyAwsAccountResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type ListGithubInstallationsRequestObject struct {
 	Slug OrgSlug `json:"slug"`
 }
@@ -1002,6 +1457,24 @@ type StrictServerInterface interface {
 	// Liveness probe
 	// (GET /api/health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
+	// List AWS cloud accounts connected to this org
+	// (GET /api/orgs/{slug}/aws/accounts)
+	ListAwsAccounts(ctx context.Context, request ListAwsAccountsRequestObject) (ListAwsAccountsResponseObject, error)
+	// Begin AWS cloud-account onboarding
+	// (POST /api/orgs/{slug}/aws/accounts)
+	StartAwsAccount(ctx context.Context, request StartAwsAccountRequestObject) (StartAwsAccountResponseObject, error)
+	// Disconnect an AWS cloud account
+	// (DELETE /api/orgs/{slug}/aws/accounts/{id})
+	DeleteAwsAccount(ctx context.Context, request DeleteAwsAccountRequestObject) (DeleteAwsAccountResponseObject, error)
+	// Get a single AWS cloud account
+	// (GET /api/orgs/{slug}/aws/accounts/{id})
+	GetAwsAccount(ctx context.Context, request GetAwsAccountRequestObject) (GetAwsAccountResponseObject, error)
+	// Finalize AWS onboarding by submitting the role ARN
+	// (POST /api/orgs/{slug}/aws/accounts/{id}/complete)
+	CompleteAwsAccount(ctx context.Context, request CompleteAwsAccountRequestObject) (CompleteAwsAccountResponseObject, error)
+	// Re-run the verification probe against a cloud account
+	// (POST /api/orgs/{slug}/aws/accounts/{id}/verify)
+	VerifyAwsAccount(ctx context.Context, request VerifyAwsAccountRequestObject) (VerifyAwsAccountResponseObject, error)
 	// List GitHub App installations connected to this org
 	// (GET /api/orgs/{slug}/github/installations)
 	ListGithubInstallations(ctx context.Context, request ListGithubInstallationsRequestObject) (ListGithubInstallationsResponseObject, error)
@@ -1239,6 +1712,180 @@ func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ListAwsAccounts operation middleware
+func (sh *strictHandler) ListAwsAccounts(w http.ResponseWriter, r *http.Request, slug OrgSlug) {
+	var request ListAwsAccountsRequestObject
+
+	request.Slug = slug
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAwsAccounts(ctx, request.(ListAwsAccountsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAwsAccounts")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAwsAccountsResponseObject); ok {
+		if err := validResponse.VisitListAwsAccountsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartAwsAccount operation middleware
+func (sh *strictHandler) StartAwsAccount(w http.ResponseWriter, r *http.Request, slug OrgSlug) {
+	var request StartAwsAccountRequestObject
+
+	request.Slug = slug
+
+	var body StartAwsAccountJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartAwsAccount(ctx, request.(StartAwsAccountRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartAwsAccount")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartAwsAccountResponseObject); ok {
+		if err := validResponse.VisitStartAwsAccountResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteAwsAccount operation middleware
+func (sh *strictHandler) DeleteAwsAccount(w http.ResponseWriter, r *http.Request, slug OrgSlug, id CloudAccountID) {
+	var request DeleteAwsAccountRequestObject
+
+	request.Slug = slug
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteAwsAccount(ctx, request.(DeleteAwsAccountRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteAwsAccount")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteAwsAccountResponseObject); ok {
+		if err := validResponse.VisitDeleteAwsAccountResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAwsAccount operation middleware
+func (sh *strictHandler) GetAwsAccount(w http.ResponseWriter, r *http.Request, slug OrgSlug, id CloudAccountID) {
+	var request GetAwsAccountRequestObject
+
+	request.Slug = slug
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAwsAccount(ctx, request.(GetAwsAccountRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAwsAccount")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAwsAccountResponseObject); ok {
+		if err := validResponse.VisitGetAwsAccountResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CompleteAwsAccount operation middleware
+func (sh *strictHandler) CompleteAwsAccount(w http.ResponseWriter, r *http.Request, slug OrgSlug, id CloudAccountID) {
+	var request CompleteAwsAccountRequestObject
+
+	request.Slug = slug
+	request.Id = id
+
+	var body CompleteAwsAccountJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CompleteAwsAccount(ctx, request.(CompleteAwsAccountRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CompleteAwsAccount")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CompleteAwsAccountResponseObject); ok {
+		if err := validResponse.VisitCompleteAwsAccountResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// VerifyAwsAccount operation middleware
+func (sh *strictHandler) VerifyAwsAccount(w http.ResponseWriter, r *http.Request, slug OrgSlug, id CloudAccountID) {
+	var request VerifyAwsAccountRequestObject
+
+	request.Slug = slug
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.VerifyAwsAccount(ctx, request.(VerifyAwsAccountRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "VerifyAwsAccount")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(VerifyAwsAccountResponseObject); ok {
+		if err := validResponse.VisitVerifyAwsAccountResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListGithubInstallations operation middleware
 func (sh *strictHandler) ListGithubInstallations(w http.ResponseWriter, r *http.Request, slug OrgSlug) {
 	var request ListGithubInstallationsRequestObject
@@ -1374,49 +2021,65 @@ func (sh *strictHandler) GetPing(w http.ResponseWriter, r *http.Request, params 
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"aOoeeikAAA==",
+	"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",
+	"Q8uXtF4sbhcxGSe3v9z+XwAAAP//Ba+72II/AAA=",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

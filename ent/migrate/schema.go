@@ -49,6 +49,40 @@ var (
 			},
 		},
 	}
+	// CloudAccountsColumns holds the columns for the "cloud_accounts" table.
+	CloudAccountsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID},
+		{Name: "org_slug", Type: field.TypeString},
+		{Name: "provider", Type: field.TypeString, Default: "aws"},
+		{Name: "label", Type: field.TypeString},
+		{Name: "account_id", Type: field.TypeString, Nullable: true},
+		{Name: "role_arn", Type: field.TypeString, Nullable: true},
+		{Name: "external_id", Type: field.TypeString},
+		{Name: "region", Type: field.TypeString, Nullable: true},
+		{Name: "status", Type: field.TypeString, Default: "pending"},
+		{Name: "last_verified_at", Type: field.TypeTime, Nullable: true},
+		{Name: "last_verification_error", Type: field.TypeString, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// CloudAccountsTable holds the schema information for the "cloud_accounts" table.
+	CloudAccountsTable = &schema.Table{
+		Name:       "cloud_accounts",
+		Columns:    CloudAccountsColumns,
+		PrimaryKey: []*schema.Column{CloudAccountsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "cloudaccount_org_slug",
+				Unique:  false,
+				Columns: []*schema.Column{CloudAccountsColumns[1]},
+			},
+			{
+				Name:    "cloudaccount_org_slug_provider_label",
+				Unique:  true,
+				Columns: []*schema.Column{CloudAccountsColumns[1], CloudAccountsColumns[2], CloudAccountsColumns[3]},
+			},
+		},
+	}
 	// GithubInstallStatesColumns holds the columns for the "github_install_states" table.
 	GithubInstallStatesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID},
@@ -94,6 +128,7 @@ var (
 	Tables = []*schema.Table{
 		CliAuthCodesTable,
 		CliTokensTable,
+		CloudAccountsTable,
 		GithubInstallStatesTable,
 		GithubInstallationsTable,
 	}

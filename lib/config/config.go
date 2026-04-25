@@ -21,6 +21,18 @@ type Config struct {
 	GitHubAppSlug          string
 	GitHubAppPrivateKey    []byte
 	GitHubAppWebhookSecret string
+
+	// AWSPlatformAccountID is the 12-digit account that customers' IAM
+	// trust policies will allow sts:AssumeRole from — i.e. the AWS account
+	// running this Spacefleet instance. Hosted Spacefleet sets it to its
+	// own; self-hosters set it to whichever account they run in.
+	//
+	// AWSCFNTemplateURL points at a publicly fetchable CloudFormation
+	// template that creates the integration role. Hosted Spacefleet
+	// publishes one to its CDN; self-hosters host their own (or fork ours).
+	// Both must be configured for the AWS onboarding flow to be enabled.
+	AWSPlatformAccountID string
+	AWSCFNTemplateURL    string
 }
 
 func Load() (*Config, error) {
@@ -33,6 +45,8 @@ func Load() (*Config, error) {
 		RedisURL:               os.Getenv("REDIS_URL"),
 		GitHubAppSlug:          os.Getenv("GITHUB_APP_SLUG"),
 		GitHubAppWebhookSecret: os.Getenv("GITHUB_APP_WEBHOOK_SECRET"),
+		AWSPlatformAccountID:   os.Getenv("AWS_PLATFORM_ACCOUNT_ID"),
+		AWSCFNTemplateURL:      os.Getenv("AWS_CFN_TEMPLATE_URL"),
 	}
 
 	if v := os.Getenv("GITHUB_APP_ID"); v != "" {
@@ -75,6 +89,14 @@ func loadGitHubPrivateKey() ([]byte, error) {
 // error instead of crashing or silently accepting requests.
 func (c *Config) GitHubAppConfigured() bool {
 	return c.GitHubAppID != 0 && c.GitHubAppSlug != "" && len(c.GitHubAppPrivateKey) > 0
+}
+
+// AWSConfigured reports whether the AWS onboarding flow can be served.
+// Both the platform account ID and the CFN template URL are required —
+// the URL embeds the account ID into the customer's stack, and without
+// either the Quick Create link is meaningless.
+func (c *Config) AWSConfigured() bool {
+	return c.AWSPlatformAccountID != "" && c.AWSCFNTemplateURL != ""
 }
 
 func getenv(key, fallback string) string {

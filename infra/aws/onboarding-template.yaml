@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Spacefleet platform integration role. Creates a single IAM role that
+  Spacefleet's control plane can assume cross-account using the supplied
+  external ID. The role's permissions policy is intentionally minimal in
+  this v1 — broaden it as the platform begins to manage real resources.
+
+  Host this file at a stable HTTPS URL (S3 + CloudFront, GitHub raw
+  via your CDN, etc.) and point the AWS_CFN_TEMPLATE_URL env var at it.
+  The Quick Create link the app generates is built off that URL.
+
+Parameters:
+  SpacefleetAccountId:
+    Type: String
+    Description: AWS account ID running the Spacefleet control plane.
+    AllowedPattern: '^\d{12}$'
+    ConstraintDescription: must be a 12-digit AWS account ID.
+
+  ExternalId:
+    Type: String
+    Description: External ID issued by Spacefleet. Treat as a secret.
+    NoEcho: true
+    MinLength: 32
+
+  RoleName:
+    Type: String
+    Default: SpacefleetIntegrationRole
+    Description: Name of the IAM role Spacefleet will assume.
+
+Resources:
+  SpacefleetRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${SpacefleetAccountId}:root'
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      ManagedPolicyArns:
+        - !Ref SpacefleetPolicy
+      Tags:
+        - Key: spacefleet:managed
+          Value: 'true'
+
+  # v1 permissions policy. Read-only AWS describe + STS GetCallerIdentity
+  # is enough for the verification probe; broaden this as build/runtime
+  # provisioning lands. See ~/dev/spacefleet-planning/cloud-account-onboarding.md
+  # for the full target permission set.
+  SpacefleetPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: SpacefleetIntegrationPolicy
+      Description: Permissions Spacefleet needs in this account.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ReadOnlyDescribe
+            Effect: Allow
+            Action:
+              - ec2:Describe*
+              - rds:Describe*
+              - rds:ListTagsForResource
+              - ecs:Describe*
+              - ecs:List*
+              - elasticloadbalancing:Describe*
+              - logs:Describe*
+              - iam:ListRoles
+              - iam:GetRole
+              - sts:GetCallerIdentity
+            Resource: '*'
+
+Outputs:
+  RoleArn:
+    Description: Paste this back into Spacefleet to complete onboarding.
+    Value: !GetAtt SpacefleetRole.Arn
+  AccountId:
+    Description: Your AWS account ID.
+    Value: !Ref AWS::AccountId
