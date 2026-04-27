@@ -218,6 +218,48 @@ func (s *Service) IssueInstallationToken(ctx context.Context, orgSlug string, in
 	return s.app.InstallationToken(ctx, installationID)
 }
 
+// GetInstallationRepository proves the org → installation → repo chain
+// in one call: confirms the installation belongs to the org, then asks
+// GitHub for the repo using an installation-scoped token (so 404 also
+// covers "repo isn't in this installation"). Returns ErrInstallNotFound
+// or ErrRepoNotFound for the two distinct user errors so callers can
+// pick clearer 4xx responses.
+//
+// Note that installationID here is GitHub's int64 — not our row UUID.
+// Callers that have only the UUID should look up the installation
+// row first and use its InstallationID field.
+func (s *Service) GetInstallationRepository(ctx context.Context, orgSlug string, installationID int64, fullName string) (*Repository, error) {
+	if _, err := s.GetInstallation(ctx, orgSlug, installationID); err != nil {
+		return nil, err
+	}
+	return s.app.GetInstallationRepository(ctx, installationID, fullName)
+}
+
+// ResolveCommit looks up a ref (branch/tag/SHA) inside an installation's
+// repo and returns the full commit SHA. Verifies the installation
+// belongs to orgSlug first; ErrRefNotFound covers both "ref doesn't
+// exist" and "installation can't see the repo" because GitHub returns
+// the same 404 for both — same end state from the caller's POV.
+func (s *Service) ResolveCommit(ctx context.Context, orgSlug string, installationID int64, fullName, ref string) (string, error) {
+	if _, err := s.GetInstallation(ctx, orgSlug, installationID); err != nil {
+		return "", err
+	}
+	return s.app.ResolveCommit(ctx, installationID, fullName, ref)
+}
+
+// DefaultBranch satisfies lib/apps.RepoLookup. The apps service hands
+// us GitHub's int64 installation_id (not our UUID — it's already
+// looked up the row by the time it gets here), and we surface only
+// the default-branch string. Errors propagate verbatim so callers
+// can tell ErrInstallNotFound from ErrRepoNotFound.
+func (s *Service) DefaultBranch(ctx context.Context, orgSlug string, installationID int64, repoFullName string) (string, error) {
+	repo, err := s.app.GetInstallationRepository(ctx, installationID, repoFullName)
+	if err != nil {
+		return "", err
+	}
+	return repo.DefaultBranch, nil
+}
+
 func newState() (plaintext string, hash []byte, err error) {
 	buf := make([]byte, 32)
 	if _, err = rand.Read(buf); err != nil {

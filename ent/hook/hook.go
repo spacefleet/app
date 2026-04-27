@@ -9,6 +9,30 @@ import (
 	"github.com/spacefleet/app/ent"
 )
 
+// The AppFunc type is an adapter to allow the use of ordinary
+// function as App mutator.
+type AppFunc func(context.Context, *ent.AppMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f AppFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.AppMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AppMutation", m)
+}
+
+// The BuildFunc type is an adapter to allow the use of ordinary
+// function as Build mutator.
+type BuildFunc func(context.Context, *ent.BuildMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f BuildFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.BuildMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.BuildMutation", m)
+}
+
 // The CLIAuthCodeFunc type is an adapter to allow the use of ordinary
 // function as CLIAuthCode mutator.
 type CLIAuthCodeFunc func(context.Context, *ent.CLIAuthCodeMutation) (ent.Value, error)

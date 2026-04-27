@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/spacefleet/app/ent"
-	awsint "github.com/spacefleet/app/lib/aws"
 	"github.com/spacefleet/app/lib/auth"
+	awsint "github.com/spacefleet/app/lib/aws"
 )
 
 // StartAwsAccount kicks off cloud-account onboarding: mint external ID,

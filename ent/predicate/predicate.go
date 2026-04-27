@@ -6,6 +6,12 @@ import (
 	"entgo.io/ent/dialect/sql"
 )
 
+// App is the predicate function for app builders.
+type App func(*sql.Selector)
+
+// Build is the predicate function for build builders.
+type Build func(*sql.Selector)
+
 // CLIAuthCode is the predicate function for cliauthcode builders.
 type CLIAuthCode func(*sql.Selector)
 

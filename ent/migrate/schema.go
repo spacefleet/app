@@ -8,6 +8,77 @@ import (
 )
 
 var (
+	// AppsColumns holds the columns for the "apps" table.
+	AppsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID},
+		{Name: "org_slug", Type: field.TypeString},
+		{Name: "name", Type: field.TypeString, Size: 200},
+		{Name: "slug", Type: field.TypeString, Size: 50},
+		{Name: "cloud_account_id", Type: field.TypeUUID},
+		{Name: "github_installation_id", Type: field.TypeUUID},
+		{Name: "github_repo_full_name", Type: field.TypeString},
+		{Name: "default_branch", Type: field.TypeString},
+		{Name: "created_by", Type: field.TypeString},
+		{Name: "deleting_at", Type: field.TypeTime, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// AppsTable holds the schema information for the "apps" table.
+	AppsTable = &schema.Table{
+		Name:       "apps",
+		Columns:    AppsColumns,
+		PrimaryKey: []*schema.Column{AppsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "app_org_slug",
+				Unique:  false,
+				Columns: []*schema.Column{AppsColumns[1]},
+			},
+			{
+				Name:    "app_org_slug_slug",
+				Unique:  true,
+				Columns: []*schema.Column{AppsColumns[1], AppsColumns[3]},
+			},
+		},
+	}
+	// BuildsColumns holds the columns for the "builds" table.
+	BuildsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID},
+		{Name: "app_id", Type: field.TypeUUID},
+		{Name: "source_ref", Type: field.TypeString},
+		{Name: "source_sha", Type: field.TypeString, Nullable: true},
+		{Name: "status", Type: field.TypeString, Default: "queued"},
+		{Name: "stages", Type: field.TypeJSON},
+		{Name: "image_uri", Type: field.TypeString, Nullable: true},
+		{Name: "image_digest", Type: field.TypeString, Nullable: true},
+		{Name: "fargate_task_arn", Type: field.TypeString, Nullable: true},
+		{Name: "log_group", Type: field.TypeString, Nullable: true},
+		{Name: "log_stream", Type: field.TypeString, Nullable: true},
+		{Name: "webhook_secret", Type: field.TypeString},
+		{Name: "error_message", Type: field.TypeString, Nullable: true},
+		{Name: "created_by", Type: field.TypeString},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "started_at", Type: field.TypeTime, Nullable: true},
+		{Name: "ended_at", Type: field.TypeTime, Nullable: true},
+	}
+	// BuildsTable holds the schema information for the "builds" table.
+	BuildsTable = &schema.Table{
+		Name:       "builds",
+		Columns:    BuildsColumns,
+		PrimaryKey: []*schema.Column{BuildsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "build_app_id_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{BuildsColumns[1], BuildsColumns[14]},
+			},
+			{
+				Name:    "build_status",
+				Unique:  false,
+				Columns: []*schema.Column{BuildsColumns[4]},
+			},
+		},
+	}
 	// CliAuthCodesColumns holds the columns for the "cli_auth_codes" table.
 	CliAuthCodesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID},
@@ -126,6 +197,8 @@ var (
 	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
+		AppsTable,
+		BuildsTable,
 		CliAuthCodesTable,
 		CliTokensTable,
 		CloudAccountsTable,

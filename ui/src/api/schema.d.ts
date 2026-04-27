@@ -311,6 +311,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/orgs/{slug}/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List apps registered for this org */
+        get: operations["listApps"];
+        put?: never;
+        /**
+         * Register an app for builds in this org
+         * @description Validates the cloud account is connected, the GitHub installation
+         *     belongs to the org, and the requested repo is reachable from
+         *     that installation. The repo's default branch is captured from
+         *     GitHub at create time and used as the default ref for builds.
+         */
+        post: operations["createApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs/{slug}/apps/{appSlug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a single app by slug */
+        get: operations["getApp"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete an app, optionally tearing down its AWS resources
+         * @description With `destroy_resources: false` the app row is dropped immediately
+         *     and the customer's AWS resources (ECR repo, IAM role, log group)
+         *     remain in place. With `destroy_resources: true` the row is
+         *     marked for teardown and a destroy_app job is queued; the row
+         *     disappears once `pulumi destroy` succeeds. Either way, returns
+         *     409 if any builds are running for the app.
+         */
+        delete: operations["deleteApp"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs/{slug}/apps/{appSlug}/builds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List builds for an app, newest first */
+        get: operations["listBuilds"];
+        put?: never;
+        /**
+         * Start a new build for an app
+         * @description Resolves the requested ref (defaults to the app's default branch)
+         *     to a 40-char commit SHA, mints a per-build webhook secret, and
+         *     enqueues a River BuildJob. The 202 response carries the build's
+         *     UUID so the UI can poll for status.
+         */
+        post: operations["createBuild"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs/{slug}/apps/{appSlug}/builds/{buildId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one build by UUID, scoped to the app and org */
+        get: operations["getBuild"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orgs/{slug}/apps/{appSlug}/builds/{buildId}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fetch one page of CloudWatch log events for a build
+         * @description Polls CloudWatch Logs in the customer's account for the build's
+         *     log stream. The first call returns the oldest events. Subsequent
+         *     calls pass `after` (the previous response's `next_token`) to get
+         *     the next page; CloudWatch returns the same `next_token` once the
+         *     stream is fully drained, which is when `has_more` will be false.
+         *
+         *     Returns an empty page (no events, empty `next_token`) before the
+         *     build has dispatched or before the builder has written its first
+         *     log line. Callers poll while `build_terminal` is false; once it
+         *     flips true and `has_more` is false, no further events will appear.
+         */
+        get: operations["getBuildLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cli/whoami": {
         parameters: {
             query?: never;
@@ -489,6 +609,131 @@ export interface components {
              */
             platform_account_id: string;
         };
+        App: {
+            /** Format: uuid */
+            id: string;
+            org_slug: string;
+            name: string;
+            /** @description URL-safe identifier, immutable for the app's lifetime. */
+            slug: string;
+            /** Format: uuid */
+            cloud_account_id: string;
+            /** Format: uuid */
+            github_installation_id: string;
+            /** @description "owner/repo" — captured at create time. */
+            github_repo_full_name: string;
+            /** @description Default ref to build when a build request omits one. Captured from GitHub at create time and not auto-refreshed. */
+            default_branch: string;
+            /** @description Clerk user ID of the person who registered the app. */
+            created_by: string;
+            /**
+             * Format: date-time
+             * @description Set when destroy_resources is in flight; null otherwise.
+             */
+            deleting_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        AppList: {
+            apps: components["schemas"]["App"][];
+        };
+        AppCreateRequest: {
+            name: string;
+            /** Format: uuid */
+            cloud_account_id: string;
+            /**
+             * Format: uuid
+             * @description Spacefleet's row UUID, not GitHub's int64 installation_id.
+             */
+            github_installation_id: string;
+            /** @description "owner/repo". */
+            github_repo_full_name: string;
+        };
+        Build: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            app_id: string;
+            /** @description What the user typed — branch, tag, or SHA. */
+            source_ref: string;
+            /** @description Resolved 40-char commit SHA. */
+            source_sha: string;
+            /** @enum {string} */
+            status: "queued" | "running" | "succeeded" | "failed";
+            stages: components["schemas"]["BuildStage"][];
+            /** @description Populated on success. */
+            image_uri?: string;
+            /** @description Populated on success (sha256:...). */
+            image_digest?: string;
+            fargate_task_arn?: string;
+            log_group?: string;
+            log_stream?: string;
+            error_message?: string;
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            started_at?: string | null;
+            /** Format: date-time */
+            ended_at?: string | null;
+        };
+        BuildStage: {
+            /** @description Stage name (reconcile, prepare, dispatch, clone, build, push, backstop). */
+            name: string;
+            /** @enum {string} */
+            status: "running" | "succeeded" | "failed";
+            /** Format: date-time */
+            at: string;
+            /** @description Per-stage payload (image_uri/image_digest on push, error on failed). */
+            data?: {
+                [key: string]: unknown;
+            };
+        };
+        BuildList: {
+            builds: components["schemas"]["Build"][];
+        };
+        BuildLogEvent: {
+            /**
+             * Format: int64
+             * @description Producer-side unix timestamp in milliseconds.
+             */
+            timestamp: number;
+            message: string;
+        };
+        BuildLogPage: {
+            events: components["schemas"]["BuildLogEvent"][];
+            /**
+             * @description Opaque continuation token. Pass back as `after` on the next
+             *     call. Empty when the build hasn't dispatched yet.
+             */
+            next_token?: string;
+            /**
+             * @description True when the server believes more events are available. False
+             *     once the stream is fully drained; combined with
+             *     `build_terminal=true`, this signals the UI can stop polling.
+             */
+            has_more: boolean;
+            /**
+             * @description True when the build's status is succeeded or failed. The UI
+             *     stops polling once this is true and `has_more` is false.
+             */
+            build_terminal: boolean;
+        };
+        BuildCreateRequest: {
+            /** @description Branch, tag, or SHA. Defaults to the app's default_branch when omitted. */
+            ref?: string;
+        };
+        AppDeleteRequest: {
+            /**
+             * @description When true, queue a destroy_app job that runs `pulumi destroy`
+             *     on the per-app stack. When false (default), drop our row only
+             *     and leave the customer's AWS resources in place.
+             * @default false
+             */
+            destroy_resources: boolean;
+        };
         CloudAccountCompleteRequest: {
             /** @description From the stack's Outputs.RoleArn. */
             role_arn: string;
@@ -509,6 +754,8 @@ export interface components {
         OrgSlug: string;
         InstallationID: number;
         CloudAccountID: string;
+        AppSlug: string;
+        BuildID: string;
     };
     requestBodies: never;
     headers: never;
@@ -911,6 +1158,222 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CloudAccount"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listApps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Apps (newest first) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description App created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["App"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+                appSlug: components["parameters"]["AppSlug"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description App */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["App"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+                appSlug: components["parameters"]["AppSlug"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["AppDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description App deleted in place (no resources destroyed) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Destroy job enqueued; row will be removed after teardown completes */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["App"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listBuilds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+                appSlug: components["parameters"]["AppSlug"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Builds */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuildList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+                appSlug: components["parameters"]["AppSlug"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["BuildCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Build enqueued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Build"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getBuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+                appSlug: components["parameters"]["AppSlug"];
+                buildId: components["parameters"]["BuildID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Build */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Build"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getBuildLogs: {
+        parameters: {
+            query?: {
+                /** @description Opaque continuation token from a previous response. */
+                after?: string;
+                /** @description Max events to return. Defaults to 1000. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: components["parameters"]["OrgSlug"];
+                appSlug: components["parameters"]["AppSlug"];
+                buildId: components["parameters"]["BuildID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of log events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuildLogPage"];
                 };
             };
             default: components["responses"]["Error"];

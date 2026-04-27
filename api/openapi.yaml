@@ -336,6 +336,199 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/orgs/{slug}/apps:
+    get:
+      summary: List apps registered for this org
+      operationId: listApps
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+      responses:
+        "200":
+          description: Apps (newest first)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppList"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Register an app for builds in this org
+      description: |
+        Validates the cloud account is connected, the GitHub installation
+        belongs to the org, and the requested repo is reachable from
+        that installation. The repo's default branch is captured from
+        GitHub at create time and used as the default ref for builds.
+      operationId: createApp
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppCreateRequest"
+      responses:
+        "201":
+          description: App created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/App"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/orgs/{slug}/apps/{appSlug}:
+    get:
+      summary: Get a single app by slug
+      operationId: getApp
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+        - $ref: "#/components/parameters/AppSlug"
+      responses:
+        "200":
+          description: App
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/App"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      summary: Delete an app, optionally tearing down its AWS resources
+      description: |
+        With `destroy_resources: false` the app row is dropped immediately
+        and the customer's AWS resources (ECR repo, IAM role, log group)
+        remain in place. With `destroy_resources: true` the row is
+        marked for teardown and a destroy_app job is queued; the row
+        disappears once `pulumi destroy` succeeds. Either way, returns
+        409 if any builds are running for the app.
+      operationId: deleteApp
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+        - $ref: "#/components/parameters/AppSlug"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppDeleteRequest"
+      responses:
+        "200":
+          description: App deleted in place (no resources destroyed)
+        "202":
+          description: Destroy job enqueued; row will be removed after teardown completes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/App"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/orgs/{slug}/apps/{appSlug}/builds:
+    get:
+      summary: List builds for an app, newest first
+      operationId: listBuilds
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+        - $ref: "#/components/parameters/AppSlug"
+      responses:
+        "200":
+          description: Builds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildList"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Start a new build for an app
+      description: |
+        Resolves the requested ref (defaults to the app's default branch)
+        to a 40-char commit SHA, mints a per-build webhook secret, and
+        enqueues a River BuildJob. The 202 response carries the build's
+        UUID so the UI can poll for status.
+      operationId: createBuild
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+        - $ref: "#/components/parameters/AppSlug"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuildCreateRequest"
+      responses:
+        "202":
+          description: Build enqueued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Build"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/orgs/{slug}/apps/{appSlug}/builds/{buildId}:
+    get:
+      summary: Get one build by UUID, scoped to the app and org
+      operationId: getBuild
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+        - $ref: "#/components/parameters/AppSlug"
+        - $ref: "#/components/parameters/BuildID"
+      responses:
+        "200":
+          description: Build
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Build"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/orgs/{slug}/apps/{appSlug}/builds/{buildId}/logs:
+    get:
+      summary: Fetch one page of CloudWatch log events for a build
+      description: |
+        Polls CloudWatch Logs in the customer's account for the build's
+        log stream. The first call returns the oldest events. Subsequent
+        calls pass `after` (the previous response's `next_token`) to get
+        the next page; CloudWatch returns the same `next_token` once the
+        stream is fully drained, which is when `has_more` will be false.
+
+        Returns an empty page (no events, empty `next_token`) before the
+        build has dispatched or before the builder has written its first
+        log line. Callers poll while `build_terminal` is false; once it
+        flips true and `has_more` is false, no further events will appear.
+      operationId: getBuildLogs
+      parameters:
+        - $ref: "#/components/parameters/OrgSlug"
+        - $ref: "#/components/parameters/AppSlug"
+        - $ref: "#/components/parameters/BuildID"
+        - in: query
+          name: after
+          required: false
+          schema:
+            type: string
+          description: Opaque continuation token from a previous response.
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 1000
+          description: Max events to return. Defaults to 1000.
+      responses:
+        "200":
+          description: One page of log events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildLogPage"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/cli/whoami:
     get:
       summary: Return the user associated with the CLI token
@@ -658,6 +851,226 @@ components:
             The AWS account ID Spacefleet is running in — what the
             customer's IAM trust policy will allow AssumeRole from.
 
+    App:
+      type: object
+      required:
+        [
+          id,
+          org_slug,
+          name,
+          slug,
+          cloud_account_id,
+          github_installation_id,
+          github_repo_full_name,
+          default_branch,
+          created_by,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        org_slug:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+          description: URL-safe identifier, immutable for the app's lifetime.
+        cloud_account_id:
+          type: string
+          format: uuid
+        github_installation_id:
+          type: string
+          format: uuid
+        github_repo_full_name:
+          type: string
+          description: '"owner/repo" — captured at create time.'
+        default_branch:
+          type: string
+          description: Default ref to build when a build request omits one. Captured from GitHub at create time and not auto-refreshed.
+        created_by:
+          type: string
+          description: Clerk user ID of the person who registered the app.
+        deleting_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set when destroy_resources is in flight; null otherwise.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AppList:
+      type: object
+      required: [apps]
+      properties:
+        apps:
+          type: array
+          items:
+            $ref: "#/components/schemas/App"
+
+    AppCreateRequest:
+      type: object
+      required:
+        [
+          name,
+          cloud_account_id,
+          github_installation_id,
+          github_repo_full_name,
+        ]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        cloud_account_id:
+          type: string
+          format: uuid
+        github_installation_id:
+          type: string
+          format: uuid
+          description: Spacefleet's row UUID, not GitHub's int64 installation_id.
+        github_repo_full_name:
+          type: string
+          description: '"owner/repo".'
+
+    Build:
+      type: object
+      required: [id, app_id, source_ref, source_sha, status, stages, created_by, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        app_id:
+          type: string
+          format: uuid
+        source_ref:
+          type: string
+          description: What the user typed — branch, tag, or SHA.
+        source_sha:
+          type: string
+          description: Resolved 40-char commit SHA.
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        stages:
+          type: array
+          items:
+            $ref: "#/components/schemas/BuildStage"
+        image_uri:
+          type: string
+          description: Populated on success.
+        image_digest:
+          type: string
+          description: Populated on success (sha256:...).
+        fargate_task_arn:
+          type: string
+        log_group:
+          type: string
+        log_stream:
+          type: string
+        error_message:
+          type: string
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    BuildStage:
+      type: object
+      required: [name, status, at]
+      properties:
+        name:
+          type: string
+          description: Stage name (reconcile, prepare, dispatch, clone, build, push, backstop).
+        status:
+          type: string
+          enum: [running, succeeded, failed]
+        at:
+          type: string
+          format: date-time
+        data:
+          type: object
+          additionalProperties: true
+          description: Per-stage payload (image_uri/image_digest on push, error on failed).
+
+    BuildList:
+      type: object
+      required: [builds]
+      properties:
+        builds:
+          type: array
+          items:
+            $ref: "#/components/schemas/Build"
+
+    BuildLogEvent:
+      type: object
+      required: [timestamp, message]
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+          description: Producer-side unix timestamp in milliseconds.
+        message:
+          type: string
+
+    BuildLogPage:
+      type: object
+      required: [events, has_more, build_terminal]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/BuildLogEvent"
+        next_token:
+          type: string
+          description: |
+            Opaque continuation token. Pass back as `after` on the next
+            call. Empty when the build hasn't dispatched yet.
+        has_more:
+          type: boolean
+          description: |
+            True when the server believes more events are available. False
+            once the stream is fully drained; combined with
+            `build_terminal=true`, this signals the UI can stop polling.
+        build_terminal:
+          type: boolean
+          description: |
+            True when the build's status is succeeded or failed. The UI
+            stops polling once this is true and `has_more` is false.
+
+    BuildCreateRequest:
+      type: object
+      properties:
+        ref:
+          type: string
+          description: Branch, tag, or SHA. Defaults to the app's default_branch when omitted.
+
+    AppDeleteRequest:
+      type: object
+      properties:
+        destroy_resources:
+          type: boolean
+          default: false
+          description: |
+            When true, queue a destroy_app job that runs `pulumi destroy`
+            on the per-app stack. When false (default), drop our row only
+            and leave the customer's AWS resources in place.
+
     CloudAccountCompleteRequest:
       type: object
       required: [role_arn]
@@ -683,6 +1096,19 @@ components:
     CloudAccountID:
       in: path
       name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AppSlug:
+      in: path
+      name: appSlug
+      required: true
+      schema:
+        type: string
+    BuildID:
+      in: path
+      name: buildId
       required: true
       schema:
         type: string

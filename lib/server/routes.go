@@ -8,8 +8,10 @@ import (
 	"net/http"
 
 	"github.com/spacefleet/app/lib/api"
+	"github.com/spacefleet/app/lib/apps"
 	"github.com/spacefleet/app/lib/auth"
 	awsint "github.com/spacefleet/app/lib/aws"
+	"github.com/spacefleet/app/lib/builds"
 	"github.com/spacefleet/app/lib/cli"
 	"github.com/spacefleet/app/lib/config"
 	"github.com/spacefleet/app/lib/github"
@@ -24,11 +26,20 @@ var publicAPIPaths = []string{
 	"/api/cli/auth/exchange",
 }
 
-func registerRoutes(mux *http.ServeMux, cfg *config.Config, cliSvc *cli.Service, ghSvc *github.Service, awsSvc *awsint.Service) {
+func registerRoutes(mux *http.ServeMux, cfg *config.Config, cliSvc *cli.Service, ghSvc *github.Service, awsSvc *awsint.Service, appsSvc *apps.Service, buildsSvc *builds.Service, logsCtrl *builds.LogsController, webhookHandler *builds.WebhookHandler) {
+	// Internal build webhook. Mounted *before* the OpenAPI routes so
+	// the more-specific path wins; mounted *outside* the auth
+	// middleware so the builder Fargate task can call us with HMAC
+	// auth instead of a Clerk session. The handler does its own
+	// authentication via X-Spacefleet-Signature.
+	if webhookHandler != nil {
+		mux.HandleFunc("POST "+builds.WebhookPath, webhookHandler.ServeHTTP)
+	}
+
 	// API routes are generated from api/openapi.yaml and mounted under /api/*.
 	// oapi-codegen applies middlewares in reverse, so the last entry wraps
 	// outermost: RequireAuth runs first, then RequireOrg, then the handler.
-	api.HandlerWithOptions(api.NewStrictHandler(api.NewServer(cliSvc, ghSvc, awsSvc), nil), api.StdHTTPServerOptions{
+	api.HandlerWithOptions(api.NewStrictHandler(api.NewServer(cliSvc, ghSvc, awsSvc, appsSvc, buildsSvc, logsCtrl), nil), api.StdHTTPServerOptions{
 		BaseRouter: mux,
 		Middlewares: []api.MiddlewareFunc{
 			api.MiddlewareFunc(auth.RequireOrg(cliMemberChecker(cliSvc))),

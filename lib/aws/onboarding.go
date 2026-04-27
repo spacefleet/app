@@ -38,11 +38,11 @@ func newExternalID() (string, error) {
 // region's console (the role itself is global, but the stack lives in
 // one region).
 type QuickCreateParams struct {
-	TemplateURL      string
-	StackName        string
-	PlatformAccount  string
-	ExternalID       string
-	Region           string
+	TemplateURL     string
+	StackName       string
+	PlatformAccount string
+	ExternalID      string
+	Region          string
 }
 
 // QuickCreateURL builds the AWS Console URL that pre-fills the role

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 )
 
 type Config struct {
@@ -33,7 +34,41 @@ type Config struct {
 	// Both must be configured for the AWS onboarding flow to be enabled.
 	AWSPlatformAccountID string
 	AWSCFNTemplateURL    string
+
+	// PublicURL is the externally-reachable base URL for this Spacefleet
+	// install. Builder Fargate tasks POST webhook events back here; in
+	// development this typically points at an ngrok-style tunnel.
+	PublicURL string
+
+	// State backend for Pulumi. One bucket per Spacefleet installation;
+	// per-cloud-account KMS keys live inside it. Required to run any
+	// build (the worker bails at startup if these are unset and a build
+	// is attempted) but not to serve the HTTP API alone.
+	StateBucket       string
+	StateBucketRegion string
+	StateKMSKeyARN    string
+
+	// BuilderImage is the digest-pinned reference to the builder image
+	// that Fargate tasks pull. The release pipeline injects the default
+	// at link time via -ldflags; this env var overrides for local dev.
+	BuilderImage string
+
+	// WorkerConcurrency is the maximum number of River jobs the worker
+	// process executes in parallel. Default 4.
+	WorkerConcurrency int
+
+	// BuildTimeout is the absolute hard ceiling on a single build, after
+	// which the worker StopTasks the Fargate task and marks the build
+	// failed. Default 60m.
+	BuildTimeout time.Duration
 }
+
+// DefaultBuilderImage is the builder image reference the binary ships
+// with. Release builds overwrite this via -ldflags
+// "-X github.com/spacefleet/app/lib/config.DefaultBuilderImage=...". A
+// stock `go build` leaves it empty, so the worker either picks up
+// SPACEFLEET_BUILDER_IMAGE or BuildPipelineConfigured() returns false.
+var DefaultBuilderImage = ""
 
 func Load() (*Config, error) {
 	cfg := &Config{
@@ -47,6 +82,11 @@ func Load() (*Config, error) {
 		GitHubAppWebhookSecret: os.Getenv("GITHUB_APP_WEBHOOK_SECRET"),
 		AWSPlatformAccountID:   os.Getenv("AWS_PLATFORM_ACCOUNT_ID"),
 		AWSCFNTemplateURL:      os.Getenv("AWS_CFN_TEMPLATE_URL"),
+		PublicURL:              os.Getenv("SPACEFLEET_PUBLIC_URL"),
+		StateBucket:            os.Getenv("SPACEFLEET_STATE_BUCKET"),
+		StateBucketRegion:      os.Getenv("SPACEFLEET_STATE_BUCKET_REGION"),
+		StateKMSKeyARN:         os.Getenv("SPACEFLEET_STATE_KMS_KEY_ARN"),
+		BuilderImage:           getenv("SPACEFLEET_BUILDER_IMAGE", DefaultBuilderImage),
 	}
 
 	if v := os.Getenv("GITHUB_APP_ID"); v != "" {
@@ -56,6 +96,18 @@ func Load() (*Config, error) {
 		}
 		cfg.GitHubAppID = id
 	}
+
+	concurrency, err := parsePositiveInt("SPACEFLEET_WORKER_CONCURRENCY", 4)
+	if err != nil {
+		return nil, err
+	}
+	cfg.WorkerConcurrency = concurrency
+
+	timeout, err := parseDuration("SPACEFLEET_BUILD_TIMEOUT", 60*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	cfg.BuildTimeout = timeout
 
 	pem, err := loadGitHubPrivateKey()
 	if err != nil {
@@ -99,9 +151,58 @@ func (c *Config) AWSConfigured() bool {
 	return c.AWSPlatformAccountID != "" && c.AWSCFNTemplateURL != ""
 }
 
+// StateBackendConfigured reports whether the build pipeline's Pulumi
+// state backend has been wired up. The HTTP server runs without it, but
+// the worker refuses to dispatch a build until all three are set.
+func (c *Config) StateBackendConfigured() bool {
+	return c.StateBucket != "" && c.StateBucketRegion != "" && c.StateKMSKeyARN != ""
+}
+
+// BuildPipelineConfigured reports whether the worker has every value it
+// needs to actually run a build end-to-end (state backend, builder
+// image, public URL for webhooks).
+func (c *Config) BuildPipelineConfigured() bool {
+	return c.StateBackendConfigured() && c.BuilderImage != "" && c.PublicURL != ""
+}
+
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return fallback
+}
+
+// parsePositiveInt reads an integer env var, falling back to fallback
+// when unset. Zero or negative values are rejected so a typo doesn't
+// silently disable the worker.
+func parsePositiveInt(key string, fallback int) (int, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	if v <= 0 {
+		return 0, fmt.Errorf("%s: must be > 0, got %d", key, v)
+	}
+	return v, nil
+}
+
+// parseDuration reads a duration env var (Go duration syntax: 60m, 1h),
+// falling back to fallback when unset.
+func parseDuration(key string, fallback time.Duration) (time.Duration, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	v, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	if v <= 0 {
+		return 0, fmt.Errorf("%s: must be > 0, got %s", key, v)
+	}
+	return v, nil
 }

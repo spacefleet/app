@@ -4,6 +4,10 @@ import { Layout } from "./components/Layout";
 import { RequireAuth } from "./components/RequireAuth";
 import { RequireOrganization } from "./components/RequireOrganization";
 import { AccountTokens } from "./routes/AccountTokens";
+import { AppDetail } from "./routes/AppDetail";
+import { AppNew } from "./routes/AppNew";
+import { Apps } from "./routes/Apps";
+import { BuildDetail } from "./routes/BuildDetail";
 import { CliAuth } from "./routes/CliAuth";
 import { Dashboard } from "./routes/Dashboard";
 import { GitHubCallback } from "./routes/GitHubCallback";
@@ -39,6 +43,13 @@ export function App() {
             <Route path="account/tokens" element={<AccountTokens />} />
             <Route path=":orgSlug" element={<RequireOrganization />}>
               <Route index element={<Dashboard />} />
+              <Route path="apps" element={<Apps />} />
+              <Route path="apps/new" element={<AppNew />} />
+              <Route path="apps/:appSlug" element={<AppDetail />} />
+              <Route
+                path="apps/:appSlug/builds/:buildId"
+                element={<BuildDetail />}
+              />
               <Route
                 path="integrations/github"
                 element={<IntegrationsGitHub />}

@@ -1,10 +1,19 @@
-.PHONY: run build test fmt vet tidy dev clean gen ui-install ui-dev ui-build services-up services-down services-logs services-reset migrate-up migrate-status
+.PHONY: run build test fmt vet tidy dev worker clean gen ui-install ui-dev ui-build services-up services-down services-logs services-reset migrate-up migrate-status bootstrap-state infra-build builder-image
 
 BINARY := bin/spacefleet
 PKG    := ./cmd/spacefleet
+INFRA_BINARY := bin/spacefleet-infra
+INFRA_PKG    := ./cmd/spacefleet-infra
+
+# Builder image — built locally for end-to-end tests against a real
+# AWS account. The release pipeline (.github/workflows/ci.yml) is what
+# publishes the canonical digest-pinned image to GHCR; this target is
+# for development.
+BUILDER_IMAGE ?= spacefleet-builder:dev
+BUILDER_PLATFORM ?= linux/amd64
 
 run:
-	go run $(PKG)
+	go run $(PKG) serve
 
 # Full production build: UI bundle + Go binary (with UI embedded).
 build: ui-build
@@ -39,6 +48,40 @@ migrate-status:
 # Dev backend only. Run `make ui-dev` in a second terminal for the React dev server.
 dev:
 	air
+
+# Long-lived worker process. Drives River-backed jobs (build, destroy_app).
+# Run alongside `make dev` in a second terminal in development.
+worker:
+	go run $(PKG) worker
+
+# Provision the Pulumi state backend (S3 bucket + KMS key) in the
+# control-plane AWS account this CLI is configured for. Idempotent.
+# Required before the worker can dispatch builds.
+bootstrap-state:
+	@if [ -z "$(BUCKET)" ]; then echo "usage: make bootstrap-state BUCKET=<name> [REGION=us-east-1]"; exit 2; fi
+	./scripts/bootstrap-state.sh --bucket "$(BUCKET)" $(if $(REGION),--region $(REGION),)
+
+# Build the dev-only spacefleet-infra CLI for driving Pulumi stacks
+# end-to-end against a connected AWS account. Phase 2 demos use this;
+# the worker (phase 5) calls the same Orchestrator in-process.
+infra-build:
+	go build -o $(INFRA_BINARY) $(INFRA_PKG)
+
+# Build the builder Docker image locally for smoke testing. Defaults
+# to linux/amd64 since v1 builders are amd64-only; override
+# BUILDER_PLATFORM=linux/arm64 for laptop-arch local runs that don't
+# need to push to ECR (the customer-side ECS task always runs amd64).
+#
+#   make builder-image                            # spacefleet-builder:dev (amd64)
+#   make builder-image BUILDER_IMAGE=foo:bar      # custom tag
+#   make builder-image BUILDER_PLATFORM=linux/arm64  # for native runs on M-series
+builder-image:
+	docker buildx build \
+		--platform $(BUILDER_PLATFORM) \
+		--load \
+		-t $(BUILDER_IMAGE) \
+		-f builder/Dockerfile \
+		builder
 
 ui-install:
 	cd ui && npm install

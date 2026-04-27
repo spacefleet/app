@@ -263,6 +263,77 @@ func (a *App) ListInstallationRepositories(ctx context.Context, installationID i
 	}
 }
 
+// GetInstallationRepository fetches a single repository accessible to the
+// named installation. We use the installation token rather than App-JWT
+// auth so a successful response proves the installation grants the App
+// access to this repo — the same property ListInstallationRepositories
+// has, but in O(1) instead of O(repos/100).
+//
+// Returns ErrInstallNotFound when GitHub responds 404 (either the repo
+// doesn't exist, or it isn't in this installation — both look the same
+// from outside, and that's exactly the failure mode the apps service
+// needs to refuse the create).
+func (a *App) GetInstallationRepository(ctx context.Context, installationID int64, fullName string) (*Repository, error) {
+	tok, err := a.InstallationToken(ctx, installationID)
+	if err != nil {
+		return nil, err
+	}
+	var repo Repository
+	path := "/repos/" + fullName
+	if err := a.doToken(ctx, tok.Token, http.MethodGet, path, nil, &repo); err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+			return nil, ErrRepoNotFound
+		}
+		return nil, err
+	}
+	return &repo, nil
+}
+
+// ErrRepoNotFound is returned when a single-repo lookup fails because
+// either the repo doesn't exist or the installation can't see it.
+var ErrRepoNotFound = errors.New("repository not found or not accessible to installation")
+
+// ErrRefNotFound is returned when a ref (branch, tag, or SHA) doesn't
+// resolve. Callers map this to a 4xx — the user gave us something the
+// repo doesn't contain.
+var ErrRefNotFound = errors.New("ref not found in repository")
+
+// ResolveCommit takes whatever the user typed — a branch name, a tag,
+// a short or long SHA — and returns the full 40-char commit SHA. Uses
+// GitHub's commits endpoint, which accepts any valid ref shape.
+//
+// We use GET /repos/{owner}/{repo}/commits/{ref} (not /git/refs) because
+// it handles all four shapes in one call: a long SHA echoes itself, a
+// short SHA expands, a branch resolves to its tip, a tag resolves to
+// the commit it points to (annotated or lightweight).
+func (a *App) ResolveCommit(ctx context.Context, installationID int64, fullName, ref string) (string, error) {
+	if ref == "" {
+		return "", errors.New("github: ref required")
+	}
+	tok, err := a.InstallationToken(ctx, installationID)
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		SHA string `json:"sha"`
+	}
+	path := "/repos/" + fullName + "/commits/" + url.PathEscape(ref)
+	if err := a.doToken(ctx, tok.Token, http.MethodGet, path, nil, &resp); err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) {
+			if apiErr.Status == http.StatusNotFound || apiErr.Status == http.StatusUnprocessableEntity {
+				return "", ErrRefNotFound
+			}
+		}
+		return "", err
+	}
+	if resp.SHA == "" {
+		return "", ErrRefNotFound
+	}
+	return resp.SHA, nil
+}
+
 // InstallURL returns the user-facing URL where a customer installs the App
 // onto repos. The state is round-tripped back to the setup callback.
 func (a *App) InstallURL(state string) string {

@@ -1,59 +1,51 @@
+// Spacefleet's binary is multi-process by subcommand: `serve` runs the
+// HTTP API, `worker` drives River-backed background jobs, `migrate`
+// applies SQL. The default (no subcommand) is `serve` — every existing
+// shell script and Dockerfile that runs `./spacefleet` keeps working.
 package main
 
 import (
-	"context"
-	"errors"
-	"log"
-	"net/http"
+	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/spacefleet/app/lib/config"
-	"github.com/spacefleet/app/lib/server"
 )
 
 func main() {
 	// .env is optional — in prod, env vars come from the deployment environment.
 	_ = godotenv.Load()
 
-	// Subcommand dispatch happens before we build the HTTP server so
-	// `spacefleet migrate` doesn't spin up Redis / a listener just to
-	// apply SQL.
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "migrate":
-			runMigrate(os.Args[2:])
-			return
-		}
+	cmd, args := parseArgs(os.Args[1:])
+	switch cmd {
+	case "serve":
+		runServe(args)
+	case "worker":
+		runWorker(args)
+	case "migrate":
+		runMigrate(args)
+	case "help", "-h", "--help":
+		printUsage(os.Stdout)
+	default:
+		fmt.Fprintf(os.Stderr, "spacefleet: unknown subcommand %q\n\n", cmd)
+		printUsage(os.Stderr)
+		os.Exit(2)
 	}
+}
 
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("load config: %v", err)
+// parseArgs returns the subcommand and any remaining arguments. With no
+// arguments at all, defaults to `serve` so `./spacefleet` (no args) is
+// still a valid invocation — that's what existing Dockerfiles use.
+func parseArgs(args []string) (cmd string, rest []string) {
+	if len(args) == 0 {
+		return "serve", nil
 	}
-	srv, err := server.New(cfg)
-	if err != nil {
-		log.Fatalf("server init: %v", err)
-	}
+	return args[0], args[1:]
+}
 
-	go func() {
-		log.Printf("listening on %s", cfg.Addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server error: %v", err)
-		}
-	}()
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
-	log.Println("shutting down")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("shutdown error: %v", err)
-	}
+func printUsage(w *os.File) {
+	fmt.Fprintln(w, "usage: spacefleet [serve|worker|migrate] [args...]")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "  serve    run the HTTP API (default)")
+	fmt.Fprintln(w, "  worker   run the River background-job worker")
+	fmt.Fprintln(w, "  migrate  apply or inspect SQL migrations (subcommands: up, status)")
 }

@@ -1,5 +1,6 @@
 import { OrganizationSwitcher, useOrganization, UserButton } from "@clerk/react";
 import {
+  Boxes,
   Cloud,
   GitBranch,
   KeyRound,
@@ -55,6 +56,12 @@ export function Layout() {
             <SidebarLink to={dashboardHref} icon={LayoutDashboard} label="Dashboard" collapsed={collapsed} end />
             {organization && (
               <>
+                <SidebarLink
+                  to={`/${organization.slug}/apps`}
+                  icon={Boxes}
+                  label="Apps"
+                  collapsed={collapsed}
+                />
                 <SidebarLink
                   to={`/${organization.slug}/integrations/github`}
                   icon={GitBranch}
