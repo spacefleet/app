@@ -61,7 +61,7 @@ jobs:
   # the main binary's BuilderImage default.
   docker-builder:
     needs: [test-go, test-ui]
-    # if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
