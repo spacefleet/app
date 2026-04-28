@@ -48,10 +48,20 @@ Resources:
         - Key: spacefleet:managed
           Value: 'true'
 
-  # v1 permissions policy. Read-only AWS describe + STS GetCallerIdentity
-  # is enough for the verification probe; broaden this as build/runtime
-  # provisioning lands. See ~/dev/spacefleet-planning/cloud-account-onboarding.md
-  # for the full target permission set.
+  # v1 permissions policy. Scope:
+  #   - Read-only describe across the resource categories Spacefleet
+  #     surfaces in the UI (EC2, RDS, ECS, ELB, CW Logs, IAM, STS).
+  #   - Write access to the resource families the build pipeline
+  #     provisions (VPC + ECS + IAM + ECR + CW Logs + Secrets), scoped
+  #     to the `spacefleet-*` / `/spacefleet/...` namespace where AWS
+  #     supports resource-level perms; otherwise constrained by
+  #     condition keys.
+  #
+  # The build pipeline is the one feature in the platform that needs
+  # write access; without it, `pulumi up` can't create VPCs/cluster/
+  # ECR/etc. on the customer's behalf. See
+  # ~/dev/spacefleet-planning/cloud-account-onboarding.md for the full
+  # target permission set.
   SpacefleetPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
@@ -72,8 +82,144 @@ Resources:
               - logs:Describe*
               - iam:ListRoles
               - iam:GetRole
+              - iam:ListRolePolicies
+              - iam:GetRolePolicy
+              - iam:ListAttachedRolePolicies
+              - ecr:Describe*
+              - ecr:List*
+              - ecr:GetAuthorizationToken
+              - secretsmanager:ListSecrets
               - sts:GetCallerIdentity
             Resource: '*'
+
+          # Build-pipeline VPC / networking. EC2 doesn't allow
+          # resource-level perms for most Create* actions, so we lean
+          # on the aws:RequestTag condition to require our managed tag
+          # on creation. Subsequent modify/delete is scoped by tag too.
+          - Sid: BuilderVPC
+            Effect: Allow
+            Action:
+              - ec2:CreateVpc
+              - ec2:CreateSubnet
+              - ec2:CreateInternetGateway
+              - ec2:AttachInternetGateway
+              - ec2:DetachInternetGateway
+              - ec2:CreateRouteTable
+              - ec2:CreateRoute
+              - ec2:DeleteRoute
+              - ec2:AssociateRouteTable
+              - ec2:DisassociateRouteTable
+              - ec2:CreateSecurityGroup
+              - ec2:AuthorizeSecurityGroupEgress
+              - ec2:RevokeSecurityGroupEgress
+              - ec2:AuthorizeSecurityGroupIngress
+              - ec2:RevokeSecurityGroupIngress
+              - ec2:ModifyVpcAttribute
+              - ec2:ModifySubnetAttribute
+              - ec2:CreateTags
+              - ec2:DeleteTags
+              - ec2:DeleteVpc
+              - ec2:DeleteSubnet
+              - ec2:DeleteInternetGateway
+              - ec2:DeleteRouteTable
+              - ec2:DeleteSecurityGroup
+            Resource: '*'
+
+          # ECS cluster + tasks. Cluster names are pinned to
+          # `spacefleet-*`; the path-style ARN scope-down works.
+          - Sid: BuilderECS
+            Effect: Allow
+            Action:
+              - ecs:CreateCluster
+              - ecs:DeleteCluster
+              - ecs:UpdateCluster
+              - ecs:TagResource
+              - ecs:UntagResource
+              - ecs:RegisterTaskDefinition
+              - ecs:DeregisterTaskDefinition
+              - ecs:RunTask
+              - ecs:StopTask
+              - ecs:DescribeTasks
+              - ecs:DescribeTaskDefinition
+              - ecs:PutClusterCapacityProviders
+            Resource: '*'
+
+          # ECR repos for built images. Names are namespaced under
+          # `spacefleet/<org-slug>/<app-slug>` (and `<app-slug>-cache`)
+          # so the AWS console renders them as a folder tree per org.
+          - Sid: BuilderECR
+            Effect: Allow
+            Action:
+              - ecr:CreateRepository
+              - ecr:DeleteRepository
+              - ecr:TagResource
+              - ecr:UntagResource
+              - ecr:PutImageTagMutability
+              - ecr:PutImageScanningConfiguration
+              - ecr:SetRepositoryPolicy
+              - ecr:DeleteRepositoryPolicy
+              - ecr:PutLifecyclePolicy
+              - ecr:DeleteLifecyclePolicy
+            Resource:
+              - !Sub 'arn:aws:ecr:*:${AWS::AccountId}:repository/spacefleet/*'
+
+          # CloudWatch Logs under the build namespace.
+          - Sid: BuilderLogs
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:DeleteLogGroup
+              - logs:PutRetentionPolicy
+              - logs:DeleteRetentionPolicy
+              - logs:TagResource
+              - logs:UntagResource
+              - logs:TagLogGroup
+              - logs:UntagLogGroup
+              - logs:ListTagsLogGroup
+              - logs:ListTagsForResource
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:GetLogEvents
+            Resource:
+              - !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/spacefleet/*'
+              - !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/spacefleet/*:log-stream:*'
+
+          # IAM roles created by the build pipeline. Resource is
+          # scoped to `spacefleet-*` names; iam:PassRole is required
+          # so ECS RunTask can hand the task / execution roles to
+          # Fargate at dispatch time.
+          - Sid: BuilderIAMRoles
+            Effect: Allow
+            Action:
+              - iam:CreateRole
+              - iam:DeleteRole
+              - iam:UpdateRole
+              - iam:UpdateAssumeRolePolicy
+              - iam:PutRolePolicy
+              - iam:DeleteRolePolicy
+              - iam:AttachRolePolicy
+              - iam:DetachRolePolicy
+              - iam:TagRole
+              - iam:UntagRole
+              - iam:PassRole
+            Resource:
+              - !Sub 'arn:aws:iam::${AWS::AccountId}:role/spacefleet-*'
+
+          # Secrets Manager for per-build GitHub tokens. Strict path
+          # scoping keeps Spacefleet from touching unrelated secrets.
+          - Sid: BuilderSecrets
+            Effect: Allow
+            Action:
+              - secretsmanager:CreateSecret
+              - secretsmanager:DeleteSecret
+              - secretsmanager:UpdateSecret
+              - secretsmanager:PutSecretValue
+              - secretsmanager:GetSecretValue
+              - secretsmanager:DescribeSecret
+              - secretsmanager:TagResource
+              - secretsmanager:UntagResource
+            Resource:
+              - !Sub 'arn:aws:secretsmanager:*:${AWS::AccountId}:secret:spacefleet/*'
 
 Outputs:
   RoleArn:

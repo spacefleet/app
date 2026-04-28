@@ -36,9 +36,10 @@ Never edit `gen.go` or `schema.d.ts` by hand.
 
 ## Dev workflow
 
-Two terminals:
+Three terminals:
 ```sh
-make dev      # Air live-reload on :8080
+make dev      # Air live-reload on :8080 (HTTP API)
+make worker   # River-backed background-job worker (builds, destroys)
 make ui-dev   # Vite on :5173, proxies /api/* and /config.js to :8080
 ```
 Open <http://localhost:5173>. Same-origin in dev via the Vite proxy, same-origin in prod via the embedded binary — no CORS either way.
@@ -47,6 +48,14 @@ Backing services (optional today, wired into `.env.example`):
 ```sh
 make services-up   # Postgres + Redis via docker-compose
 ```
+
+## Two processes: `serve` and `worker`
+
+The binary dispatches by subcommand: `spacefleet serve` runs the HTTP API, `spacefleet worker` runs the River-backed job worker, `spacefleet migrate` is the SQL migration tool. Default (no subcommand) is `serve`.
+
+- The HTTP API is stateless — scale horizontally.
+- The worker is the only place build dispatch / pulumi state mutation happens. It applies River's bundled migrations on startup. Reattaches to in-flight builds across restarts (phase 5).
+- Both read the same `.env`. The Pulumi CLI must be on `$PATH` for the worker (the runtime Docker image installs it; locally `brew install pulumi`).
 
 ## Common commands
 
@@ -74,12 +83,16 @@ No JS test runner is configured — UI verification is typecheck-only for now.
 ```
 spacefleet-app/
 ├── api/openapi.yaml         # shared contract (drives Go + TS + external CLI)
-├── cmd/spacefleet/main.go   # entrypoint
+├── cmd/spacefleet/          # main.go (subcommand dispatch) + serve.go + worker.go + migrate.go
+├── docs/self-hosting.md     # operator-facing setup guide
 ├── lib/
 │   ├── api/                 # gen.go (generated) + handlers.go (hand-written)
 │   ├── auth/                # Clerk middleware, session helpers
 │   ├── config/              # env loading
+│   ├── pulumi/              # Automation API wrapper (s3 backend, KMS provider, runner)
+│   ├── queue/               # River wrapper (pgxpool, migrations, worker registry)
 │   └── server/              # http.Server, request logging, route mounting
+├── scripts/bootstrap-state.sh  # idempotent bootstrap of Pulumi state bucket + KMS key
 ├── ui/
 │   ├── embed.go             # //go:embed all:dist
 │   ├── src/api/             # generated schema + openapi-fetch client
@@ -88,5 +101,6 @@ spacefleet-app/
 │   └── vite.config.ts       # /api + /config.js proxy to :8080
 ├── Makefile
 ├── docker-compose.yml       # Postgres + Redis for local dev
+├── .tool-versions           # pulumi CLI version pin (asdf-style)
 └── .air.toml
 ```

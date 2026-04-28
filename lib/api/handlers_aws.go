@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/spacefleet/app/ent"
-	awsint "github.com/spacefleet/app/lib/aws"
 	"github.com/spacefleet/app/lib/auth"
+	awsint "github.com/spacefleet/app/lib/aws"
 )
 
 // StartAwsAccount kicks off cloud-account onboarding: mint external ID,
@@ -71,7 +71,7 @@ func (s *Server) CompleteAwsAccount(ctx context.Context, req CompleteAwsAccountR
 		// Row got persisted (status=connected or status=error). Surface
 		// it to the UI even when verify itself failed, so the customer
 		// sees the captured error message inline.
-		return CompleteAwsAccount200JSONResponse(cloudAccountToAPI(row)), nil
+		return CompleteAwsAccount200JSONResponse(s.cloudAccountWithURLs(row)), nil
 	}
 	switch {
 	case errors.Is(err, awsint.ErrAccountNotFound):
@@ -92,7 +92,7 @@ func (s *Server) VerifyAwsAccount(ctx context.Context, req VerifyAwsAccountReque
 	}
 	row, err := s.aws.Verify(ctx, req.Slug, uuid.UUID(req.Id))
 	if row != nil {
-		return VerifyAwsAccount200JSONResponse(cloudAccountToAPI(row)), nil
+		return VerifyAwsAccount200JSONResponse(s.cloudAccountWithURLs(row)), nil
 	}
 	if errors.Is(err, awsint.ErrAccountNotFound) {
 		return errResp[VerifyAwsAccountdefaultJSONResponse](http.StatusNotFound, "not_found", err.Error()), nil
@@ -111,7 +111,7 @@ func (s *Server) ListAwsAccounts(ctx context.Context, req ListAwsAccountsRequest
 	}
 	out := make([]CloudAccount, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, cloudAccountToAPI(r))
+		out = append(out, s.cloudAccountWithURLs(r))
 	}
 	return ListAwsAccounts200JSONResponse{Accounts: out}, nil
 }
@@ -128,7 +128,7 @@ func (s *Server) GetAwsAccount(ctx context.Context, req GetAwsAccountRequestObje
 		}
 		return nil, err
 	}
-	return GetAwsAccount200JSONResponse(cloudAccountToAPI(row)), nil
+	return GetAwsAccount200JSONResponse(s.cloudAccountWithURLs(row)), nil
 }
 
 // DeleteAwsAccount drops the row. Idempotent — missing row returns 204
@@ -144,6 +144,21 @@ func (s *Server) DeleteAwsAccount(ctx context.Context, req DeleteAwsAccountReque
 		return nil, err
 	}
 	return DeleteAwsAccount204Response{}, nil
+}
+
+// cloudAccountWithURLs is cloudAccountToAPI plus the on-the-fly URL
+// fields (update_stack_url) that need access to the aws Service. We
+// compute these per-request rather than persisting them so a server
+// reconfiguration (new template URL, region change) takes effect
+// without a backfill.
+func (s *Server) cloudAccountWithURLs(row *ent.CloudAccount) CloudAccount {
+	out := cloudAccountToAPI(row)
+	if s.aws != nil {
+		if u, err := s.aws.UpdateStackURL(row); err == nil && u != "" {
+			out.UpdateStackUrl = &u
+		}
+	}
+	return out
 }
 
 // cloudAccountToAPI converts an ent row to the API shape. External ID

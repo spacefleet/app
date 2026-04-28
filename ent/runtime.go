@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/spacefleet/app/ent/app"
+	"github.com/spacefleet/app/ent/build"
 	"github.com/spacefleet/app/ent/cliauthcode"
 	"github.com/spacefleet/app/ent/clitoken"
 	"github.com/spacefleet/app/ent/cloudaccount"
@@ -18,6 +20,106 @@ import (
 // (default values, validators, hooks and policies) and stitches it
 // to their package variables.
 func init() {
+	appFields := schema.App{}.Fields()
+	_ = appFields
+	// appDescOrgSlug is the schema descriptor for org_slug field.
+	appDescOrgSlug := appFields[1].Descriptor()
+	// app.OrgSlugValidator is a validator for the "org_slug" field. It is called by the builders before save.
+	app.OrgSlugValidator = appDescOrgSlug.Validators[0].(func(string) error)
+	// appDescName is the schema descriptor for name field.
+	appDescName := appFields[2].Descriptor()
+	// app.NameValidator is a validator for the "name" field. It is called by the builders before save.
+	app.NameValidator = func() func(string) error {
+		validators := appDescName.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(name string) error {
+			for _, fn := range fns {
+				if err := fn(name); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// appDescSlug is the schema descriptor for slug field.
+	appDescSlug := appFields[3].Descriptor()
+	// app.SlugValidator is a validator for the "slug" field. It is called by the builders before save.
+	app.SlugValidator = func() func(string) error {
+		validators := appDescSlug.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(slug string) error {
+			for _, fn := range fns {
+				if err := fn(slug); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// appDescGithubRepoFullName is the schema descriptor for github_repo_full_name field.
+	appDescGithubRepoFullName := appFields[6].Descriptor()
+	// app.GithubRepoFullNameValidator is a validator for the "github_repo_full_name" field. It is called by the builders before save.
+	app.GithubRepoFullNameValidator = appDescGithubRepoFullName.Validators[0].(func(string) error)
+	// appDescDefaultBranch is the schema descriptor for default_branch field.
+	appDescDefaultBranch := appFields[7].Descriptor()
+	// app.DefaultBranchValidator is a validator for the "default_branch" field. It is called by the builders before save.
+	app.DefaultBranchValidator = appDescDefaultBranch.Validators[0].(func(string) error)
+	// appDescCreatedBy is the schema descriptor for created_by field.
+	appDescCreatedBy := appFields[8].Descriptor()
+	// app.CreatedByValidator is a validator for the "created_by" field. It is called by the builders before save.
+	app.CreatedByValidator = appDescCreatedBy.Validators[0].(func(string) error)
+	// appDescCreatedAt is the schema descriptor for created_at field.
+	appDescCreatedAt := appFields[10].Descriptor()
+	// app.DefaultCreatedAt holds the default value on creation for the created_at field.
+	app.DefaultCreatedAt = appDescCreatedAt.Default.(func() time.Time)
+	// appDescUpdatedAt is the schema descriptor for updated_at field.
+	appDescUpdatedAt := appFields[11].Descriptor()
+	// app.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	app.DefaultUpdatedAt = appDescUpdatedAt.Default.(func() time.Time)
+	// app.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	app.UpdateDefaultUpdatedAt = appDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// appDescID is the schema descriptor for id field.
+	appDescID := appFields[0].Descriptor()
+	// app.DefaultID holds the default value on creation for the id field.
+	app.DefaultID = appDescID.Default.(func() uuid.UUID)
+	buildFields := schema.Build{}.Fields()
+	_ = buildFields
+	// buildDescSourceRef is the schema descriptor for source_ref field.
+	buildDescSourceRef := buildFields[2].Descriptor()
+	// build.SourceRefValidator is a validator for the "source_ref" field. It is called by the builders before save.
+	build.SourceRefValidator = buildDescSourceRef.Validators[0].(func(string) error)
+	// buildDescStatus is the schema descriptor for status field.
+	buildDescStatus := buildFields[4].Descriptor()
+	// build.DefaultStatus holds the default value on creation for the status field.
+	build.DefaultStatus = buildDescStatus.Default.(string)
+	// build.StatusValidator is a validator for the "status" field. It is called by the builders before save.
+	build.StatusValidator = buildDescStatus.Validators[0].(func(string) error)
+	// buildDescStages is the schema descriptor for stages field.
+	buildDescStages := buildFields[5].Descriptor()
+	// build.DefaultStages holds the default value on creation for the stages field.
+	build.DefaultStages = buildDescStages.Default.([]schema.StageEvent)
+	// buildDescWebhookSecret is the schema descriptor for webhook_secret field.
+	buildDescWebhookSecret := buildFields[11].Descriptor()
+	// build.WebhookSecretValidator is a validator for the "webhook_secret" field. It is called by the builders before save.
+	build.WebhookSecretValidator = buildDescWebhookSecret.Validators[0].(func(string) error)
+	// buildDescCreatedBy is the schema descriptor for created_by field.
+	buildDescCreatedBy := buildFields[13].Descriptor()
+	// build.CreatedByValidator is a validator for the "created_by" field. It is called by the builders before save.
+	build.CreatedByValidator = buildDescCreatedBy.Validators[0].(func(string) error)
+	// buildDescCreatedAt is the schema descriptor for created_at field.
+	buildDescCreatedAt := buildFields[14].Descriptor()
+	// build.DefaultCreatedAt holds the default value on creation for the created_at field.
+	build.DefaultCreatedAt = buildDescCreatedAt.Default.(func() time.Time)
+	// buildDescID is the schema descriptor for id field.
+	buildDescID := buildFields[0].Descriptor()
+	// build.DefaultID holds the default value on creation for the id field.
+	build.DefaultID = buildDescID.Default.(func() uuid.UUID)
 	cliauthcodeFields := schema.CLIAuthCode{}.Fields()
 	_ = cliauthcodeFields
 	// cliauthcodeDescUserID is the schema descriptor for user_id field.

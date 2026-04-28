@@ -15,6 +15,8 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
+	"github.com/spacefleet/app/ent/app"
+	"github.com/spacefleet/app/ent/build"
 	"github.com/spacefleet/app/ent/cliauthcode"
 	"github.com/spacefleet/app/ent/clitoken"
 	"github.com/spacefleet/app/ent/cloudaccount"
@@ -27,6 +29,10 @@ type Client struct {
 	config
 	// Schema is the client for creating, migrating and dropping schema.
 	Schema *migrate.Schema
+	// App is the client for interacting with the App builders.
+	App *AppClient
+	// Build is the client for interacting with the Build builders.
+	Build *BuildClient
 	// CLIAuthCode is the client for interacting with the CLIAuthCode builders.
 	CLIAuthCode *CLIAuthCodeClient
 	// CLIToken is the client for interacting with the CLIToken builders.
@@ -48,6 +54,8 @@ func NewClient(opts ...Option) *Client {
 
 func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
+	c.App = NewAppClient(c.config)
+	c.Build = NewBuildClient(c.config)
 	c.CLIAuthCode = NewCLIAuthCodeClient(c.config)
 	c.CLIToken = NewCLITokenClient(c.config)
 	c.CloudAccount = NewCloudAccountClient(c.config)
@@ -145,6 +153,8 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	return &Tx{
 		ctx:                ctx,
 		config:             cfg,
+		App:                NewAppClient(cfg),
+		Build:              NewBuildClient(cfg),
 		CLIAuthCode:        NewCLIAuthCodeClient(cfg),
 		CLIToken:           NewCLITokenClient(cfg),
 		CloudAccount:       NewCloudAccountClient(cfg),
@@ -169,6 +179,8 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	return &Tx{
 		ctx:                ctx,
 		config:             cfg,
+		App:                NewAppClient(cfg),
+		Build:              NewBuildClient(cfg),
 		CLIAuthCode:        NewCLIAuthCodeClient(cfg),
 		CLIToken:           NewCLITokenClient(cfg),
 		CloudAccount:       NewCloudAccountClient(cfg),
@@ -180,7 +192,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 // Debug returns a new debug-client. It's used to get verbose logging on specific operations.
 //
 //	client.Debug().
-//		CLIAuthCode.
+//		App.
 //		Query().
 //		Count(ctx)
 func (c *Client) Debug() *Client {
@@ -202,26 +214,32 @@ func (c *Client) Close() error {
 // Use adds the mutation hooks to all the entity clients.
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
-	c.CLIAuthCode.Use(hooks...)
-	c.CLIToken.Use(hooks...)
-	c.CloudAccount.Use(hooks...)
-	c.GithubInstallState.Use(hooks...)
-	c.GithubInstallation.Use(hooks...)
+	for _, n := range []interface{ Use(...Hook) }{
+		c.App, c.Build, c.CLIAuthCode, c.CLIToken, c.CloudAccount, c.GithubInstallState,
+		c.GithubInstallation,
+	} {
+		n.Use(hooks...)
+	}
 }
 
 // Intercept adds the query interceptors to all the entity clients.
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
-	c.CLIAuthCode.Intercept(interceptors...)
-	c.CLIToken.Intercept(interceptors...)
-	c.CloudAccount.Intercept(interceptors...)
-	c.GithubInstallState.Intercept(interceptors...)
-	c.GithubInstallation.Intercept(interceptors...)
+	for _, n := range []interface{ Intercept(...Interceptor) }{
+		c.App, c.Build, c.CLIAuthCode, c.CLIToken, c.CloudAccount, c.GithubInstallState,
+		c.GithubInstallation,
+	} {
+		n.Intercept(interceptors...)
+	}
 }
 
 // Mutate implements the ent.Mutator interface.
 func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 	switch m := m.(type) {
+	case *AppMutation:
+		return c.App.mutate(ctx, m)
+	case *BuildMutation:
+		return c.Build.mutate(ctx, m)
 	case *CLIAuthCodeMutation:
 		return c.CLIAuthCode.mutate(ctx, m)
 	case *CLITokenMutation:
@@ -234,6 +252,272 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.GithubInstallation.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("ent: unknown mutation type %T", m)
+	}
+}
+
+// AppClient is a client for the App schema.
+type AppClient struct {
+	config
+}
+
+// NewAppClient returns a client for the App from the given config.
+func NewAppClient(c config) *AppClient {
+	return &AppClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `app.Hooks(f(g(h())))`.
+func (c *AppClient) Use(hooks ...Hook) {
+	c.hooks.App = append(c.hooks.App, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `app.Intercept(f(g(h())))`.
+func (c *AppClient) Intercept(interceptors ...Interceptor) {
+	c.inters.App = append(c.inters.App, interceptors...)
+}
+
+// Create returns a builder for creating a App entity.
+func (c *AppClient) Create() *AppCreate {
+	mutation := newAppMutation(c.config, OpCreate)
+	return &AppCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of App entities.
+func (c *AppClient) CreateBulk(builders ...*AppCreate) *AppCreateBulk {
+	return &AppCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *AppClient) MapCreateBulk(slice any, setFunc func(*AppCreate, int)) *AppCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &AppCreateBulk{err: fmt.Errorf("calling to AppClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*AppCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &AppCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for App.
+func (c *AppClient) Update() *AppUpdate {
+	mutation := newAppMutation(c.config, OpUpdate)
+	return &AppUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *AppClient) UpdateOne(_m *App) *AppUpdateOne {
+	mutation := newAppMutation(c.config, OpUpdateOne, withApp(_m))
+	return &AppUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *AppClient) UpdateOneID(id uuid.UUID) *AppUpdateOne {
+	mutation := newAppMutation(c.config, OpUpdateOne, withAppID(id))
+	return &AppUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for App.
+func (c *AppClient) Delete() *AppDelete {
+	mutation := newAppMutation(c.config, OpDelete)
+	return &AppDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *AppClient) DeleteOne(_m *App) *AppDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *AppClient) DeleteOneID(id uuid.UUID) *AppDeleteOne {
+	builder := c.Delete().Where(app.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &AppDeleteOne{builder}
+}
+
+// Query returns a query builder for App.
+func (c *AppClient) Query() *AppQuery {
+	return &AppQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeApp},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a App entity by its id.
+func (c *AppClient) Get(ctx context.Context, id uuid.UUID) (*App, error) {
+	return c.Query().Where(app.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *AppClient) GetX(ctx context.Context, id uuid.UUID) *App {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *AppClient) Hooks() []Hook {
+	return c.hooks.App
+}
+
+// Interceptors returns the client interceptors.
+func (c *AppClient) Interceptors() []Interceptor {
+	return c.inters.App
+}
+
+func (c *AppClient) mutate(ctx context.Context, m *AppMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&AppCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&AppUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&AppUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&AppDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown App mutation op: %q", m.Op())
+	}
+}
+
+// BuildClient is a client for the Build schema.
+type BuildClient struct {
+	config
+}
+
+// NewBuildClient returns a client for the Build from the given config.
+func NewBuildClient(c config) *BuildClient {
+	return &BuildClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `build.Hooks(f(g(h())))`.
+func (c *BuildClient) Use(hooks ...Hook) {
+	c.hooks.Build = append(c.hooks.Build, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `build.Intercept(f(g(h())))`.
+func (c *BuildClient) Intercept(interceptors ...Interceptor) {
+	c.inters.Build = append(c.inters.Build, interceptors...)
+}
+
+// Create returns a builder for creating a Build entity.
+func (c *BuildClient) Create() *BuildCreate {
+	mutation := newBuildMutation(c.config, OpCreate)
+	return &BuildCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of Build entities.
+func (c *BuildClient) CreateBulk(builders ...*BuildCreate) *BuildCreateBulk {
+	return &BuildCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *BuildClient) MapCreateBulk(slice any, setFunc func(*BuildCreate, int)) *BuildCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &BuildCreateBulk{err: fmt.Errorf("calling to BuildClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*BuildCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &BuildCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for Build.
+func (c *BuildClient) Update() *BuildUpdate {
+	mutation := newBuildMutation(c.config, OpUpdate)
+	return &BuildUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *BuildClient) UpdateOne(_m *Build) *BuildUpdateOne {
+	mutation := newBuildMutation(c.config, OpUpdateOne, withBuild(_m))
+	return &BuildUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *BuildClient) UpdateOneID(id uuid.UUID) *BuildUpdateOne {
+	mutation := newBuildMutation(c.config, OpUpdateOne, withBuildID(id))
+	return &BuildUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for Build.
+func (c *BuildClient) Delete() *BuildDelete {
+	mutation := newBuildMutation(c.config, OpDelete)
+	return &BuildDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *BuildClient) DeleteOne(_m *Build) *BuildDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *BuildClient) DeleteOneID(id uuid.UUID) *BuildDeleteOne {
+	builder := c.Delete().Where(build.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &BuildDeleteOne{builder}
+}
+
+// Query returns a query builder for Build.
+func (c *BuildClient) Query() *BuildQuery {
+	return &BuildQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeBuild},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a Build entity by its id.
+func (c *BuildClient) Get(ctx context.Context, id uuid.UUID) (*Build, error) {
+	return c.Query().Where(build.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *BuildClient) GetX(ctx context.Context, id uuid.UUID) *Build {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *BuildClient) Hooks() []Hook {
+	return c.hooks.Build
+}
+
+// Interceptors returns the client interceptors.
+func (c *BuildClient) Interceptors() []Interceptor {
+	return c.inters.Build
+}
+
+func (c *BuildClient) mutate(ctx context.Context, m *BuildMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&BuildCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&BuildUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&BuildUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&BuildDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown Build mutation op: %q", m.Op())
 	}
 }
 
@@ -905,11 +1189,11 @@ func (c *GithubInstallationClient) mutate(ctx context.Context, m *GithubInstalla
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		CLIAuthCode, CLIToken, CloudAccount, GithubInstallState,
+		App, Build, CLIAuthCode, CLIToken, CloudAccount, GithubInstallState,
 		GithubInstallation []ent.Hook
 	}
 	inters struct {
-		CLIAuthCode, CLIToken, CloudAccount, GithubInstallState,
+		App, Build, CLIAuthCode, CLIToken, CloudAccount, GithubInstallState,
 		GithubInstallation []ent.Interceptor
 	}
 )

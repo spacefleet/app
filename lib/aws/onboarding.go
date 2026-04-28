@@ -38,11 +38,11 @@ func newExternalID() (string, error) {
 // region's console (the role itself is global, but the stack lives in
 // one region).
 type QuickCreateParams struct {
-	TemplateURL      string
-	StackName        string
-	PlatformAccount  string
-	ExternalID       string
-	Region           string
+	TemplateURL     string
+	StackName       string
+	PlatformAccount string
+	ExternalID      string
+	Region          string
 }
 
 // QuickCreateURL builds the AWS Console URL that pre-fills the role
@@ -91,6 +91,48 @@ func regionOrDefault(r string) string {
 		return "us-east-1"
 	}
 	return r
+}
+
+// UpdateStackParams are the inputs that feed into a CloudFormation Stack
+// Update deep-link. Same shape as QuickCreateParams minus PlatformAccount
+// and ExternalID — those are baked into the existing stack and don't
+// need to be repeated on update.
+type UpdateStackParams struct {
+	TemplateURL string
+	StackName   string
+	Region      string
+}
+
+// UpdateStackURL builds an AWS Console deep-link to the existing
+// CloudFormation stack's Update wizard with our latest template URL
+// pre-filled. The customer lands on the stack page → Replace template →
+// Next → IAM acknowledgement → Update.
+//
+// Unlike Quick Create, AWS doesn't expose a one-click "quickupdate"
+// flow; this is the cleanest deep-link AWS supports. It assumes the
+// stack name matches the value we set during onboarding — if a customer
+// renamed the stack the link 404s and they have to navigate to it
+// manually, but the default name is what every Spacefleet onboarding
+// produces.
+func UpdateStackURL(p UpdateStackParams) (string, error) {
+	if p.TemplateURL == "" {
+		return "", errors.New("aws: TemplateURL required")
+	}
+	if p.StackName == "" {
+		return "", errors.New("aws: StackName required")
+	}
+
+	host := "console.aws.amazon.com"
+	if p.Region != "" && p.Region != "us-east-1" {
+		host = p.Region + ".console.aws.amazon.com"
+	}
+
+	q := url.Values{}
+	q.Set("stackId", p.StackName)
+	q.Set("templateURL", p.TemplateURL)
+
+	return "https://" + host + "/cloudformation/home?region=" + url.QueryEscape(regionOrDefault(p.Region)) +
+		"#/stacks/update/template?" + q.Encode(), nil
 }
 
 // AccountIDFromRoleARN returns the 12-digit account ID embedded in a

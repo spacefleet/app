@@ -11,7 +11,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -23,6 +25,51 @@ import (
 	strictnethttp "github.com/oapi-codegen/runtime/strictmiddleware/nethttp"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// Defines values for BuildStatus.
+const (
+	BuildStatusFailed    BuildStatus = "failed"
+	BuildStatusQueued    BuildStatus = "queued"
+	BuildStatusRunning   BuildStatus = "running"
+	BuildStatusSucceeded BuildStatus = "succeeded"
+)
+
+// Valid indicates whether the value is a known member of the BuildStatus enum.
+func (e BuildStatus) Valid() bool {
+	switch e {
+	case BuildStatusFailed:
+		return true
+	case BuildStatusQueued:
+		return true
+	case BuildStatusRunning:
+		return true
+	case BuildStatusSucceeded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BuildStageStatus.
+const (
+	BuildStageStatusFailed    BuildStageStatus = "failed"
+	BuildStageStatusRunning   BuildStageStatus = "running"
+	BuildStageStatusSucceeded BuildStageStatus = "succeeded"
+)
+
+// Valid indicates whether the value is a known member of the BuildStageStatus enum.
+func (e BuildStageStatus) Valid() bool {
+	switch e {
+	case BuildStageStatusFailed:
+		return true
+	case BuildStageStatusRunning:
+		return true
+	case BuildStageStatusSucceeded:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for CliWhoamiSource.
 const (
@@ -56,6 +103,139 @@ func (e HealthStatus) Valid() bool {
 		return false
 	}
 }
+
+// App defines model for App.
+type App struct {
+	CloudAccountId openapi_types.UUID `json:"cloud_account_id"`
+	CreatedAt      time.Time          `json:"created_at"`
+
+	// CreatedBy Clerk user ID of the person who registered the app.
+	CreatedBy string `json:"created_by"`
+
+	// DefaultBranch Default ref to build when a build request omits one. Captured from GitHub at create time and not auto-refreshed.
+	DefaultBranch string `json:"default_branch"`
+
+	// DeletingAt Set when destroy_resources is in flight; null otherwise.
+	DeletingAt           *time.Time         `json:"deleting_at,omitempty"`
+	GithubInstallationId openapi_types.UUID `json:"github_installation_id"`
+
+	// GithubRepoFullName "owner/repo" — captured at create time.
+	GithubRepoFullName string             `json:"github_repo_full_name"`
+	Id                 openapi_types.UUID `json:"id"`
+	Name               string             `json:"name"`
+	OrgSlug            string             `json:"org_slug"`
+
+	// Slug URL-safe identifier, immutable for the app's lifetime.
+	Slug      string    `json:"slug"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// AppCreateRequest defines model for AppCreateRequest.
+type AppCreateRequest struct {
+	CloudAccountId openapi_types.UUID `json:"cloud_account_id"`
+
+	// GithubInstallationId Spacefleet's row UUID, not GitHub's int64 installation_id.
+	GithubInstallationId openapi_types.UUID `json:"github_installation_id"`
+
+	// GithubRepoFullName "owner/repo".
+	GithubRepoFullName string `json:"github_repo_full_name"`
+	Name               string `json:"name"`
+}
+
+// AppDeleteRequest defines model for AppDeleteRequest.
+type AppDeleteRequest struct {
+	// DestroyResources When true, queue a destroy_app job that runs `pulumi destroy`
+	// on the per-app stack. When false (default), drop our row only
+	// and leave the customer's AWS resources in place.
+	DestroyResources *bool `json:"destroy_resources,omitempty"`
+}
+
+// AppList defines model for AppList.
+type AppList struct {
+	Apps []App `json:"apps"`
+}
+
+// Build defines model for Build.
+type Build struct {
+	AppId          openapi_types.UUID `json:"app_id"`
+	CreatedAt      time.Time          `json:"created_at"`
+	CreatedBy      string             `json:"created_by"`
+	EndedAt        *time.Time         `json:"ended_at,omitempty"`
+	ErrorMessage   *string            `json:"error_message,omitempty"`
+	FargateTaskArn *string            `json:"fargate_task_arn,omitempty"`
+	Id             openapi_types.UUID `json:"id"`
+
+	// ImageDigest Populated on success (sha256:...).
+	ImageDigest *string `json:"image_digest,omitempty"`
+
+	// ImageUri Populated on success.
+	ImageUri  *string `json:"image_uri,omitempty"`
+	LogGroup  *string `json:"log_group,omitempty"`
+	LogStream *string `json:"log_stream,omitempty"`
+
+	// SourceRef What the user typed — branch, tag, or SHA.
+	SourceRef string `json:"source_ref"`
+
+	// SourceSha Resolved 40-char commit SHA.
+	SourceSha string       `json:"source_sha"`
+	Stages    []BuildStage `json:"stages"`
+	StartedAt *time.Time   `json:"started_at,omitempty"`
+	Status    BuildStatus  `json:"status"`
+}
+
+// BuildStatus defines model for Build.Status.
+type BuildStatus string
+
+// BuildCreateRequest defines model for BuildCreateRequest.
+type BuildCreateRequest struct {
+	// Ref Branch, tag, or SHA. Defaults to the app's default_branch when omitted.
+	Ref *string `json:"ref,omitempty"`
+}
+
+// BuildList defines model for BuildList.
+type BuildList struct {
+	Builds []Build `json:"builds"`
+}
+
+// BuildLogEvent defines model for BuildLogEvent.
+type BuildLogEvent struct {
+	Message string `json:"message"`
+
+	// Timestamp Producer-side unix timestamp in milliseconds.
+	Timestamp int64 `json:"timestamp"`
+}
+
+// BuildLogPage defines model for BuildLogPage.
+type BuildLogPage struct {
+	// BuildTerminal True when the build's status is succeeded or failed. The UI
+	// stops polling once this is true and `has_more` is false.
+	BuildTerminal bool            `json:"build_terminal"`
+	Events        []BuildLogEvent `json:"events"`
+
+	// HasMore True when the server believes more events are available. False
+	// once the stream is fully drained; combined with
+	// `build_terminal=true`, this signals the UI can stop polling.
+	HasMore bool `json:"has_more"`
+
+	// NextToken Opaque continuation token. Pass back as `after` on the next
+	// call. Empty when the build hasn't dispatched yet.
+	NextToken *string `json:"next_token,omitempty"`
+}
+
+// BuildStage defines model for BuildStage.
+type BuildStage struct {
+	At time.Time `json:"at"`
+
+	// Data Per-stage payload (image_uri/image_digest on push, error on failed).
+	Data *map[string]interface{} `json:"data,omitempty"`
+
+	// Name Stage name (reconcile, prepare, dispatch, clone, build, push, backstop).
+	Name   string           `json:"name"`
+	Status BuildStageStatus `json:"status"`
+}
+
+// BuildStageStatus defines model for BuildStage.Status.
+type BuildStageStatus string
 
 // CliApproveRequest defines model for CliApproveRequest.
 type CliApproveRequest struct {
@@ -127,8 +307,14 @@ type CloudAccount struct {
 	RoleArn  *string `json:"role_arn,omitempty"`
 
 	// Status pending | connected | error | disabled.
-	Status    string    `json:"status"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Status string `json:"status"`
+
+	// UpdateStackUrl Deep-link to the AWS Console Update Stack wizard with the
+	// current onboarding template URL pre-filled. Lets a customer
+	// re-apply the latest permissions policy without re-onboarding.
+	// Null if the server has no template URL configured.
+	UpdateStackUrl *string   `json:"update_stack_url,omitempty"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // CloudAccountCompleteRequest defines model for CloudAccountCompleteRequest.
@@ -242,6 +428,12 @@ type Health struct {
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
 
+// AppSlug defines model for AppSlug.
+type AppSlug = string
+
+// BuildID defines model for BuildID.
+type BuildID = openapi_types.UUID
+
 // CloudAccountID defines model for CloudAccountID.
 type CloudAccountID = openapi_types.UUID
 
@@ -250,6 +442,15 @@ type InstallationID = int64
 
 // OrgSlug defines model for OrgSlug.
 type OrgSlug = string
+
+// GetBuildLogsParams defines parameters for GetBuildLogs.
+type GetBuildLogsParams struct {
+	// After Opaque continuation token from a previous response.
+	After *string `form:"after,omitempty" json:"after,omitempty"`
+
+	// Limit Max events to return. Defaults to 1000.
+	Limit *int32 `form:"limit,omitempty" json:"limit,omitempty"`
+}
 
 // GetPingParams defines parameters for GetPing.
 type GetPingParams struct {
@@ -264,6 +465,15 @@ type ExchangeCliAuthJSONRequestBody = CliExchangeRequest
 
 // CompleteGithubInstallJSONRequestBody defines body for CompleteGithubInstall for application/json ContentType.
 type CompleteGithubInstallJSONRequestBody = GithubInstallCompleteRequest
+
+// CreateAppJSONRequestBody defines body for CreateApp for application/json ContentType.
+type CreateAppJSONRequestBody = AppCreateRequest
+
+// DeleteAppJSONRequestBody defines body for DeleteApp for application/json ContentType.
+type DeleteAppJSONRequestBody = AppDeleteRequest
+
+// CreateBuildJSONRequestBody defines body for CreateBuild for application/json ContentType.
+type CreateBuildJSONRequestBody = BuildCreateRequest
 
 // StartAwsAccountJSONRequestBody defines body for StartAwsAccount for application/json ContentType.
 type StartAwsAccountJSONRequestBody = CloudAccountStartRequest
@@ -294,6 +504,30 @@ type ServerInterface interface {
 	// Liveness probe
 	// (GET /api/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// List apps registered for this org
+	// (GET /api/orgs/{slug}/apps)
+	ListApps(w http.ResponseWriter, r *http.Request, slug OrgSlug)
+	// Register an app for builds in this org
+	// (POST /api/orgs/{slug}/apps)
+	CreateApp(w http.ResponseWriter, r *http.Request, slug OrgSlug)
+	// Delete an app, optionally tearing down its AWS resources
+	// (DELETE /api/orgs/{slug}/apps/{appSlug})
+	DeleteApp(w http.ResponseWriter, r *http.Request, slug OrgSlug, appSlug AppSlug)
+	// Get a single app by slug
+	// (GET /api/orgs/{slug}/apps/{appSlug})
+	GetApp(w http.ResponseWriter, r *http.Request, slug OrgSlug, appSlug AppSlug)
+	// List builds for an app, newest first
+	// (GET /api/orgs/{slug}/apps/{appSlug}/builds)
+	ListBuilds(w http.ResponseWriter, r *http.Request, slug OrgSlug, appSlug AppSlug)
+	// Start a new build for an app
+	// (POST /api/orgs/{slug}/apps/{appSlug}/builds)
+	CreateBuild(w http.ResponseWriter, r *http.Request, slug OrgSlug, appSlug AppSlug)
+	// Get one build by UUID, scoped to the app and org
+	// (GET /api/orgs/{slug}/apps/{appSlug}/builds/{buildId})
+	GetBuild(w http.ResponseWriter, r *http.Request, slug OrgSlug, appSlug AppSlug, buildId BuildID)
+	// Fetch one page of CloudWatch log events for a build
+	// (GET /api/orgs/{slug}/apps/{appSlug}/builds/{buildId}/logs)
+	GetBuildLogs(w http.ResponseWriter, r *http.Request, slug OrgSlug, appSlug AppSlug, buildId BuildID, params GetBuildLogsParams)
 	// List AWS cloud accounts connected to this org
 	// (GET /api/orgs/{slug}/aws/accounts)
 	ListAwsAccounts(w http.ResponseWriter, r *http.Request, slug OrgSlug)
@@ -438,6 +672,297 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListApps operation middleware
+func (siw *ServerInterfaceWrapper) ListApps(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListApps(w, r, slug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateApp operation middleware
+func (siw *ServerInterfaceWrapper) CreateApp(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateApp(w, r, slug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteApp operation middleware
+func (siw *ServerInterfaceWrapper) DeleteApp(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "appSlug" -------------
+	var appSlug AppSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "appSlug", r.PathValue("appSlug"), &appSlug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "appSlug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteApp(w, r, slug, appSlug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetApp operation middleware
+func (siw *ServerInterfaceWrapper) GetApp(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "appSlug" -------------
+	var appSlug AppSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "appSlug", r.PathValue("appSlug"), &appSlug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "appSlug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApp(w, r, slug, appSlug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBuilds operation middleware
+func (siw *ServerInterfaceWrapper) ListBuilds(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "appSlug" -------------
+	var appSlug AppSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "appSlug", r.PathValue("appSlug"), &appSlug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "appSlug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBuilds(w, r, slug, appSlug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateBuild operation middleware
+func (siw *ServerInterfaceWrapper) CreateBuild(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "appSlug" -------------
+	var appSlug AppSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "appSlug", r.PathValue("appSlug"), &appSlug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "appSlug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateBuild(w, r, slug, appSlug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBuild operation middleware
+func (siw *ServerInterfaceWrapper) GetBuild(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "appSlug" -------------
+	var appSlug AppSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "appSlug", r.PathValue("appSlug"), &appSlug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "appSlug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "buildId" -------------
+	var buildId BuildID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "buildId", r.PathValue("buildId"), &buildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "buildId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBuild(w, r, slug, appSlug, buildId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBuildLogs operation middleware
+func (siw *ServerInterfaceWrapper) GetBuildLogs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug OrgSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "appSlug" -------------
+	var appSlug AppSlug
+
+	err = runtime.BindStyledParameterWithOptions("simple", "appSlug", r.PathValue("appSlug"), &appSlug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "appSlug", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "buildId" -------------
+	var buildId BuildID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "buildId", r.PathValue("buildId"), &buildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "buildId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetBuildLogsParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBuildLogs(w, r, slug, appSlug, buildId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -905,6 +1430,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/api/cli/whoami", wrapper.CliWhoami)
 	m.HandleFunc("POST "+options.BaseURL+"/api/github/installations/complete", wrapper.CompleteGithubInstall)
 	m.HandleFunc("GET "+options.BaseURL+"/api/health", wrapper.GetHealth)
+	m.HandleFunc("GET "+options.BaseURL+"/api/orgs/{slug}/apps", wrapper.ListApps)
+	m.HandleFunc("POST "+options.BaseURL+"/api/orgs/{slug}/apps", wrapper.CreateApp)
+	m.HandleFunc("DELETE "+options.BaseURL+"/api/orgs/{slug}/apps/{appSlug}", wrapper.DeleteApp)
+	m.HandleFunc("GET "+options.BaseURL+"/api/orgs/{slug}/apps/{appSlug}", wrapper.GetApp)
+	m.HandleFunc("GET "+options.BaseURL+"/api/orgs/{slug}/apps/{appSlug}/builds", wrapper.ListBuilds)
+	m.HandleFunc("POST "+options.BaseURL+"/api/orgs/{slug}/apps/{appSlug}/builds", wrapper.CreateBuild)
+	m.HandleFunc("GET "+options.BaseURL+"/api/orgs/{slug}/apps/{appSlug}/builds/{buildId}", wrapper.GetBuild)
+	m.HandleFunc("GET "+options.BaseURL+"/api/orgs/{slug}/apps/{appSlug}/builds/{buildId}/logs", wrapper.GetBuildLogs)
 	m.HandleFunc("GET "+options.BaseURL+"/api/orgs/{slug}/aws/accounts", wrapper.ListAwsAccounts)
 	m.HandleFunc("POST "+options.BaseURL+"/api/orgs/{slug}/aws/accounts", wrapper.StartAwsAccount)
 	m.HandleFunc("DELETE "+options.BaseURL+"/api/orgs/{slug}/aws/accounts/{id}", wrapper.DeleteAwsAccount)
@@ -1107,6 +1640,258 @@ func (response GetHealth200JSONResponse) VisitGetHealthResponse(w http.ResponseW
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type ListAppsRequestObject struct {
+	Slug OrgSlug `json:"slug"`
+}
+
+type ListAppsResponseObject interface {
+	VisitListAppsResponse(w http.ResponseWriter) error
+}
+
+type ListApps200JSONResponse AppList
+
+func (response ListApps200JSONResponse) VisitListAppsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListAppsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListAppsdefaultJSONResponse) VisitListAppsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type CreateAppRequestObject struct {
+	Slug OrgSlug `json:"slug"`
+	Body *CreateAppJSONRequestBody
+}
+
+type CreateAppResponseObject interface {
+	VisitCreateAppResponse(w http.ResponseWriter) error
+}
+
+type CreateApp201JSONResponse App
+
+func (response CreateApp201JSONResponse) VisitCreateAppResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateAppdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response CreateAppdefaultJSONResponse) VisitCreateAppResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type DeleteAppRequestObject struct {
+	Slug    OrgSlug `json:"slug"`
+	AppSlug AppSlug `json:"appSlug"`
+	Body    *DeleteAppJSONRequestBody
+}
+
+type DeleteAppResponseObject interface {
+	VisitDeleteAppResponse(w http.ResponseWriter) error
+}
+
+type DeleteApp200Response struct {
+}
+
+func (response DeleteApp200Response) VisitDeleteAppResponse(w http.ResponseWriter) error {
+	w.WriteHeader(200)
+	return nil
+}
+
+type DeleteApp202JSONResponse App
+
+func (response DeleteApp202JSONResponse) VisitDeleteAppResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteAppdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response DeleteAppdefaultJSONResponse) VisitDeleteAppResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type GetAppRequestObject struct {
+	Slug    OrgSlug `json:"slug"`
+	AppSlug AppSlug `json:"appSlug"`
+}
+
+type GetAppResponseObject interface {
+	VisitGetAppResponse(w http.ResponseWriter) error
+}
+
+type GetApp200JSONResponse App
+
+func (response GetApp200JSONResponse) VisitGetAppResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetAppdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetAppdefaultJSONResponse) VisitGetAppResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type ListBuildsRequestObject struct {
+	Slug    OrgSlug `json:"slug"`
+	AppSlug AppSlug `json:"appSlug"`
+}
+
+type ListBuildsResponseObject interface {
+	VisitListBuildsResponse(w http.ResponseWriter) error
+}
+
+type ListBuilds200JSONResponse BuildList
+
+func (response ListBuilds200JSONResponse) VisitListBuildsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListBuildsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListBuildsdefaultJSONResponse) VisitListBuildsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type CreateBuildRequestObject struct {
+	Slug    OrgSlug `json:"slug"`
+	AppSlug AppSlug `json:"appSlug"`
+	Body    *CreateBuildJSONRequestBody
+}
+
+type CreateBuildResponseObject interface {
+	VisitCreateBuildResponse(w http.ResponseWriter) error
+}
+
+type CreateBuild202JSONResponse Build
+
+func (response CreateBuild202JSONResponse) VisitCreateBuildResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateBuilddefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response CreateBuilddefaultJSONResponse) VisitCreateBuildResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type GetBuildRequestObject struct {
+	Slug    OrgSlug `json:"slug"`
+	AppSlug AppSlug `json:"appSlug"`
+	BuildId BuildID `json:"buildId"`
+}
+
+type GetBuildResponseObject interface {
+	VisitGetBuildResponse(w http.ResponseWriter) error
+}
+
+type GetBuild200JSONResponse Build
+
+func (response GetBuild200JSONResponse) VisitGetBuildResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetBuilddefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetBuilddefaultJSONResponse) VisitGetBuildResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type GetBuildLogsRequestObject struct {
+	Slug    OrgSlug `json:"slug"`
+	AppSlug AppSlug `json:"appSlug"`
+	BuildId BuildID `json:"buildId"`
+	Params  GetBuildLogsParams
+}
+
+type GetBuildLogsResponseObject interface {
+	VisitGetBuildLogsResponse(w http.ResponseWriter) error
+}
+
+type GetBuildLogs200JSONResponse BuildLogPage
+
+func (response GetBuildLogs200JSONResponse) VisitGetBuildLogsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetBuildLogsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetBuildLogsdefaultJSONResponse) VisitGetBuildLogsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type ListAwsAccountsRequestObject struct {
@@ -1457,6 +2242,30 @@ type StrictServerInterface interface {
 	// Liveness probe
 	// (GET /api/health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
+	// List apps registered for this org
+	// (GET /api/orgs/{slug}/apps)
+	ListApps(ctx context.Context, request ListAppsRequestObject) (ListAppsResponseObject, error)
+	// Register an app for builds in this org
+	// (POST /api/orgs/{slug}/apps)
+	CreateApp(ctx context.Context, request CreateAppRequestObject) (CreateAppResponseObject, error)
+	// Delete an app, optionally tearing down its AWS resources
+	// (DELETE /api/orgs/{slug}/apps/{appSlug})
+	DeleteApp(ctx context.Context, request DeleteAppRequestObject) (DeleteAppResponseObject, error)
+	// Get a single app by slug
+	// (GET /api/orgs/{slug}/apps/{appSlug})
+	GetApp(ctx context.Context, request GetAppRequestObject) (GetAppResponseObject, error)
+	// List builds for an app, newest first
+	// (GET /api/orgs/{slug}/apps/{appSlug}/builds)
+	ListBuilds(ctx context.Context, request ListBuildsRequestObject) (ListBuildsResponseObject, error)
+	// Start a new build for an app
+	// (POST /api/orgs/{slug}/apps/{appSlug}/builds)
+	CreateBuild(ctx context.Context, request CreateBuildRequestObject) (CreateBuildResponseObject, error)
+	// Get one build by UUID, scoped to the app and org
+	// (GET /api/orgs/{slug}/apps/{appSlug}/builds/{buildId})
+	GetBuild(ctx context.Context, request GetBuildRequestObject) (GetBuildResponseObject, error)
+	// Fetch one page of CloudWatch log events for a build
+	// (GET /api/orgs/{slug}/apps/{appSlug}/builds/{buildId}/logs)
+	GetBuildLogs(ctx context.Context, request GetBuildLogsRequestObject) (GetBuildLogsResponseObject, error)
 	// List AWS cloud accounts connected to this org
 	// (GET /api/orgs/{slug}/aws/accounts)
 	ListAwsAccounts(ctx context.Context, request ListAwsAccountsRequestObject) (ListAwsAccountsResponseObject, error)
@@ -1705,6 +2514,250 @@ func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetHealthResponseObject); ok {
 		if err := validResponse.VisitGetHealthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListApps operation middleware
+func (sh *strictHandler) ListApps(w http.ResponseWriter, r *http.Request, slug OrgSlug) {
+	var request ListAppsRequestObject
+
+	request.Slug = slug
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListApps(ctx, request.(ListAppsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListApps")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAppsResponseObject); ok {
+		if err := validResponse.VisitListAppsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateApp operation middleware
+func (sh *strictHandler) CreateApp(w http.ResponseWriter, r *http.Request, slug OrgSlug) {
+	var request CreateAppRequestObject
+
+	request.Slug = slug
+
+	var body CreateAppJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateApp(ctx, request.(CreateAppRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateApp")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateAppResponseObject); ok {
+		if err := validResponse.VisitCreateAppResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteApp operation middleware
+func (sh *strictHandler) DeleteApp(w http.ResponseWriter, r *http.Request, slug OrgSlug, appSlug AppSlug) {
+	var request DeleteAppRequestObject
+
+	request.Slug = slug
+	request.AppSlug = appSlug
+
+	var body DeleteAppJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteApp(ctx, request.(DeleteAppRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteApp")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteAppResponseObject); ok {
+		if err := validResponse.VisitDeleteAppResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetApp operation middleware
+func (sh *strictHandler) GetApp(w http.ResponseWriter, r *http.Request, slug OrgSlug, appSlug AppSlug) {
+	var request GetAppRequestObject
+
+	request.Slug = slug
+	request.AppSlug = appSlug
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetApp(ctx, request.(GetAppRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetApp")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAppResponseObject); ok {
+		if err := validResponse.VisitGetAppResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListBuilds operation middleware
+func (sh *strictHandler) ListBuilds(w http.ResponseWriter, r *http.Request, slug OrgSlug, appSlug AppSlug) {
+	var request ListBuildsRequestObject
+
+	request.Slug = slug
+	request.AppSlug = appSlug
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListBuilds(ctx, request.(ListBuildsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListBuilds")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListBuildsResponseObject); ok {
+		if err := validResponse.VisitListBuildsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateBuild operation middleware
+func (sh *strictHandler) CreateBuild(w http.ResponseWriter, r *http.Request, slug OrgSlug, appSlug AppSlug) {
+	var request CreateBuildRequestObject
+
+	request.Slug = slug
+	request.AppSlug = appSlug
+
+	var body CreateBuildJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateBuild(ctx, request.(CreateBuildRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateBuild")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateBuildResponseObject); ok {
+		if err := validResponse.VisitCreateBuildResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetBuild operation middleware
+func (sh *strictHandler) GetBuild(w http.ResponseWriter, r *http.Request, slug OrgSlug, appSlug AppSlug, buildId BuildID) {
+	var request GetBuildRequestObject
+
+	request.Slug = slug
+	request.AppSlug = appSlug
+	request.BuildId = buildId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetBuild(ctx, request.(GetBuildRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetBuild")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetBuildResponseObject); ok {
+		if err := validResponse.VisitGetBuildResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetBuildLogs operation middleware
+func (sh *strictHandler) GetBuildLogs(w http.ResponseWriter, r *http.Request, slug OrgSlug, appSlug AppSlug, buildId BuildID, params GetBuildLogsParams) {
+	var request GetBuildLogsRequestObject
+
+	request.Slug = slug
+	request.AppSlug = appSlug
+	request.BuildId = buildId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetBuildLogs(ctx, request.(GetBuildLogsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetBuildLogs")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetBuildLogsResponseObject); ok {
+		if err := validResponse.VisitGetBuildLogsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -2021,65 +3074,103 @@ func (sh *strictHandler) GetPing(w http.ResponseWriter, r *http.Request, params 
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"Q8uXtF4sbhcxGSe3v9z+XwAAAP//Ba+72II/AAA=",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

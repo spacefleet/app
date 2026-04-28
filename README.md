@@ -13,6 +13,7 @@ If you're just looking for a way to get started with SpaceFleet and deploy your 
 - Go 1.25+ (project uses the `tool` directive added in 1.24)
 - Node 20+ and npm
 - [Air](https://github.com/air-verse/air) for `make dev` hot reload — `go install github.com/air-verse/air@latest`
+- [Pulumi CLI](https://www.pulumi.com/docs/install/) — required by the worker process for the build pipeline. `brew install pulumi` on macOS. Version is pinned in [`.tool-versions`](.tool-versions); asdf-style version managers will read it automatically.
 
 ### Setup
 
@@ -33,7 +34,7 @@ Start development containers for Postgres and Redis using Docker Compose
 docker-compose up -d
 ```
 
-Open two terminals for the Go backend and React frontend:
+Spacefleet runs as two long-lived processes — `serve` for the HTTP API and `worker` for River-backed background jobs (builds, app-destroys). In dev you run both alongside the Vite dev server:
 
 **Terminal 1 — Go backend (port 8080, live reload):**
 
@@ -41,7 +42,13 @@ Open two terminals for the Go backend and React frontend:
 make dev
 ```
 
-**Terminal 2 — Vite dev server (port 5173, HMR):**
+**Terminal 2 — Worker process:**
+
+```sh
+make worker
+```
+
+**Terminal 3 — Vite dev server (port 5173, HMR):**
 
 ```sh
 make ui-dev
@@ -49,7 +56,7 @@ make ui-dev
 
 Then open <http://localhost:5173>. Vite proxies `/api/*` to the Go server on `:8080`, so your React code calls same-origin paths (`/api/health`, `/api/ping`) and everything just works. No CORS, no config.
 
-> In production it's a single process on a single port — Go serves the embedded SPA and handles `/api/*` itself.
+> In production it's two processes from the same binary on one or more hosts — Go serves the embedded SPA and handles `/api/*` itself, and the worker drains the River queue. See [`docs/self-hosting.md`](docs/self-hosting.md) for production wiring.
 
 ### Editing the API
 

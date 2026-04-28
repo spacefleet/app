@@ -14,6 +14,9 @@ Thumbs.db
 # --- Go ---
 bin/
 tmp/
+# Stray binaries from `go build ./cmd/...` at the repo root.
+/spacefleet
+/spacefleet-infra
 *.log
 *.test
 *.out

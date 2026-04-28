@@ -11,6 +11,69 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
+// AssumeRoleEnv assumes the customer's role and returns the env vars
+// the AWS SDK reads to authenticate. Used by every non-Pulumi AWS call
+// the build pipeline makes (ECS RunTask, Secrets Manager, CloudWatch
+// log fetches) — the consumers thread these into per-call SDK configs.
+//
+// Pulumi specifically does not use this anymore: it gets the role ARN
+// + external ID via Pulumi config so pulumi-aws's default provider does
+// the AssumeRole itself, leaving the worker's platform creds available
+// for the S3 state backend.
+//
+// region pins AWS_REGION on the resulting set; pass the region the
+// caller will operate against (the cloud account's, falling back to
+// "us-east-1" for STS-only operations).
+//
+// sessionName is the human-readable name AWS attaches to the assumed
+// session — it shows up in CloudTrail. Keep it short and prefixed with
+// "spacefleet-" so an operator scanning their trail can spot us.
+//
+// The returned credentials live ~1h by default (STS default for
+// AssumeRole). Callers that re-use creds across long-running operations
+// should re-fetch.
+func (v *Verifier) AssumeRoleEnv(ctx context.Context, roleARN, externalID, region, sessionName string) (map[string]string, error) {
+	if roleARN == "" {
+		return nil, errors.New("aws assume: role arn required")
+	}
+	if externalID == "" {
+		return nil, errors.New("aws assume: external id required")
+	}
+	if sessionName == "" {
+		sessionName = "spacefleet"
+	}
+
+	stsBase := sts.NewFromConfig(v.cfg)
+	provider := stscreds.NewAssumeRoleProvider(stsBase, roleARN, func(o *stscreds.AssumeRoleOptions) {
+		o.ExternalID = awssdk.String(externalID)
+		o.RoleSessionName = sessionName
+	})
+
+	creds, err := provider.Retrieve(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("aws assume: retrieve credentials: %w", err)
+	}
+
+	env := map[string]string{
+		"AWS_ACCESS_KEY_ID":     creds.AccessKeyID,
+		"AWS_SECRET_ACCESS_KEY": creds.SecretAccessKey,
+		"AWS_SESSION_TOKEN":     creds.SessionToken,
+	}
+	switch {
+	case region != "":
+		env["AWS_REGION"] = region
+		env["AWS_DEFAULT_REGION"] = region
+	case v.cfg.Region != "":
+		env["AWS_REGION"] = v.cfg.Region
+		env["AWS_DEFAULT_REGION"] = v.cfg.Region
+	default:
+		env["AWS_REGION"] = "us-east-1"
+		env["AWS_DEFAULT_REGION"] = "us-east-1"
+	}
+	env["AWS_SDK_LOAD_CONFIG"] = "0"
+	return env, nil
+}
+
 // stsClient narrows what the assume-role flow needs out of the SDK so
 // tests can fake it without spinning up the full AWS layer.
 type stsClient interface {

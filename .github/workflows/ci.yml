@@ -55,8 +55,78 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
-  docker:
+  # Builds and pushes the per-build Fargate image — the Kaniko-based
+  # container the customer's account runs to clone + build + push.
+  # Runs before docker-app so we can bake the resulting digest into
+  # the main binary's BuilderImage default.
+  docker-builder:
     needs: [test-go, test-ui]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      ref: ${{ steps.compose.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/builder" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+            type=sha,format=long
+
+      # v1 builders are amd64-only — Fargate ECS tasks always run amd64
+      # for builds and the IPv4 / image-pull cost difference is nil.
+      # Multi-arch is on the explicit "out of scope for v1" list.
+      - name: Build and push builder
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: builder
+          file: builder/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=builder
+          cache-to: type=gha,mode=max,scope=builder
+
+      # Compose the canonical digest-pinned reference the main binary's
+      # ldflags get baked with. Format: <image>:<tag>@sha256:<digest>.
+      # Using github.ref_name (the literal git tag, e.g. v0.5.0)
+      # guarantees the embedded reference matches a tag we actually
+      # pushed in steps.meta above.
+      - name: Compose builder ref
+        id: compose
+        run: |
+          ref="${IMAGE}:${GITHUB_REF_NAME}@${{ steps.build.outputs.digest }}"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+          echo "Builder image ref: ${ref}"
+
+  # Builds the main spacefleet binary image with the builder's
+  # digest-pinned reference baked in. Depends on docker-builder so the
+  # ref is known and the digest is reproducibly the one we just pushed.
+  docker-app:
+    needs: [docker-builder]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -71,9 +141,21 @@ jobs:
       - name: Resolve image name
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
-      # QEMU is only needed for emulated RUN steps — our Dockerfile
-      # cross-compiles via TARGETARCH and the runtime stage has no RUN,
-      # so this is belt-and-braces for future changes.
+      # Read Pulumi version from .tool-versions so the runtime image and
+      # local dev (asdf-style) can never drift. Single source of truth.
+      - name: Read Pulumi version
+        id: pulumi
+        run: |
+          version=$(awk '$1 == "pulumi" { print $2 }' .tool-versions)
+          if [ -z "$version" ]; then
+            echo "no pulumi entry in .tool-versions" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # QEMU emulates the arm64 runtime stage's RUN steps (apt-get,
+      # useradd) when the build host is amd64. The Go and UI stages are
+      # pinned to BUILDPLATFORM so they cross-compile natively.
       - uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
@@ -104,6 +186,9 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            BUILDER_IMAGE_REF=${{ needs.docker-builder.outputs.ref }}
+            PULUMI_VERSION=${{ steps.pulumi.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
