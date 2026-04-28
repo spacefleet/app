@@ -407,6 +407,17 @@ function AccountItem({
               Verify
             </button>
           )}
+          {account.update_stack_url && (
+            <a
+              href={account.update_stack_url}
+              target="_blank"
+              rel="noreferrer"
+              title="Open the AWS Console Update Stack wizard with the latest Spacefleet template pre-filled."
+              className="border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+            >
+              Update permissions
+            </a>
+          )}
           <button
             type="button"
             onClick={disconnect}

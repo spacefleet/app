@@ -106,7 +106,7 @@ func runWorker(_ []string) {
 			Bucket:    cfg.StateBucket,
 			Region:    cfg.StateBucketRegion,
 			KMSKeyARN: cfg.StateKMSKeyARN,
-		}, verifier, cfg.BuilderImage)
+		}, cfg.BuilderImage)
 		if err != nil {
 			log.Fatalf("worker: orchestrator: %v", err)
 		}

@@ -145,12 +145,34 @@ func stateURL(b BackendConfig, prefix string) string {
 // secretsProvider returns the awskms:// URL Pulumi uses to encrypt
 // stack-secret values. The region in the URL is the *KMS* key's
 // region, parsed from the ARN.
+//
+// Note: Pulumi (via gocloud.dev) expects the key ID — UUID or
+// alias/<name> — as the URL host, not the full ARN. A raw ARN puts
+// colons in the host portion and Go's net/url chokes
+// ("invalid port \":key\" after host"). We extract the ID from the
+// ARN and pass the region separately as a query param.
 func secretsProvider(b BackendConfig) string {
 	region := regionFromARN(b.KMSKeyARN)
 	if region == "" {
 		region = b.Region
 	}
-	return fmt.Sprintf("awskms://%s?region=%s", b.KMSKeyARN, region)
+	return fmt.Sprintf("awskms://%s?region=%s", keyIDFromARN(b.KMSKeyARN), region)
+}
+
+// keyIDFromARN returns the trailing identifier of a KMS ARN in the
+// form Pulumi's secrets provider URL accepts:
+//
+//	arn:aws:kms:<r>:<a>:key/<uuid>     -> <uuid>
+//	arn:aws:kms:<r>:<a>:alias/<name>   -> alias/<name>
+//
+// Inputs that don't have the six-segment ARN shape are returned
+// unchanged so plain key IDs / aliases pass through.
+func keyIDFromARN(arn string) string {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 {
+		return arn
+	}
+	return strings.TrimPrefix(parts[5], "key/")
 }
 
 // regionFromARN pulls the region out of an IAM/KMS-style ARN. Returns

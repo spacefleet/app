@@ -75,9 +75,25 @@ func TestBackendForBuilderInfra(t *testing.T) {
 	if got.StackName != wantStack {
 		t.Errorf("StackName = %q, want %q", got.StackName, wantStack)
 	}
-	wantSecrets := "awskms://arn:aws:kms:us-east-1:111122223333:key/abcd?region=us-east-1"
+	wantSecrets := "awskms://abcd?region=us-east-1"
 	if got.SecretsProvider != wantSecrets {
 		t.Errorf("SecretsProvider = %q\n want %q", got.SecretsProvider, wantSecrets)
+	}
+}
+
+func TestKeyIDFromARN(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"arn:aws:kms:us-east-2:111122223333:key/74d6b102-b806-4efd-9fd0-c6eba3eed297", "74d6b102-b806-4efd-9fd0-c6eba3eed297"},
+		{"arn:aws:kms:us-east-1:111122223333:alias/spacefleet-state", "alias/spacefleet-state"},
+		{"abcd-1234", "abcd-1234"},          // already a key ID
+		{"alias/something", "alias/something"}, // already an alias
+	}
+	for _, tc := range cases {
+		if got := keyIDFromARN(tc.in); got != tc.want {
+			t.Errorf("keyIDFromARN(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 

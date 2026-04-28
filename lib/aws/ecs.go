@@ -7,7 +7,6 @@ import (
 	"sort"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
@@ -44,29 +43,23 @@ func SessionCredsFromEnv(env map[string]string) (SessionCreds, error) {
 }
 
 // ConfigFromCreds returns an aws.Config that uses the provided
-// short-lived credentials. We bypass the default credential chain
-// entirely so a misconfigured worker host can't accidentally fall back
-// to its own IAM role mid-call.
-func ConfigFromCreds(ctx context.Context, c SessionCreds) (awssdk.Config, error) {
+// short-lived credentials. We construct the config directly rather than
+// calling awsconfig.LoadDefaultConfig — the latter still honors
+// AWS_PROFILE on the worker host even with empty shared-config files,
+// and a dev who has e.g. AWS_PROFILE=SomeAdmin set in their shell would
+// otherwise see "failed to get shared config profile" here. We already
+// have all the inputs the SDK needs, so there's nothing to load.
+func ConfigFromCreds(_ context.Context, c SessionCreds) (awssdk.Config, error) {
 	if c.AccessKeyID == "" || c.SecretAccessKey == "" {
 		return awssdk.Config{}, errors.New("aws: empty access key or secret")
 	}
 	if c.Region == "" {
 		return awssdk.Config{}, errors.New("aws: region required")
 	}
-	provider := credentials.NewStaticCredentialsProvider(c.AccessKeyID, c.SecretAccessKey, c.SessionToken)
-	cfg, err := awsconfig.LoadDefaultConfig(ctx,
-		awsconfig.WithCredentialsProvider(provider),
-		awsconfig.WithRegion(c.Region),
-		// Block the SDK from reading shared profiles/IMDS — the assumed
-		// session is the only credential we want in play.
-		awsconfig.WithSharedConfigFiles([]string{}),
-		awsconfig.WithSharedCredentialsFiles([]string{}),
-	)
-	if err != nil {
-		return awssdk.Config{}, fmt.Errorf("aws: load config: %w", err)
-	}
-	return cfg, nil
+	return awssdk.Config{
+		Region:      c.Region,
+		Credentials: credentials.NewStaticCredentialsProvider(c.AccessKeyID, c.SecretAccessKey, c.SessionToken),
+	}, nil
 }
 
 // ECSClient is the narrow surface the build worker calls into. Defining

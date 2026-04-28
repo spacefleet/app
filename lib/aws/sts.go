@@ -12,12 +12,17 @@ import (
 )
 
 // AssumeRoleEnv assumes the customer's role and returns the env vars
-// the AWS SDK (and Pulumi's AWS provider) read to authenticate. Used by
-// the Pulumi orchestrator to fan short-lived creds into the workspace
-// for one stack run.
+// the AWS SDK reads to authenticate. Used by every non-Pulumi AWS call
+// the build pipeline makes (ECS RunTask, Secrets Manager, CloudWatch
+// log fetches) — the consumers thread these into per-call SDK configs.
+//
+// Pulumi specifically does not use this anymore: it gets the role ARN
+// + external ID via Pulumi config so pulumi-aws's default provider does
+// the AssumeRole itself, leaving the worker's platform creds available
+// for the S3 state backend.
 //
 // region pins AWS_REGION on the resulting set; pass the region the
-// stack should provision against (the cloud account's, falling back to
+// caller will operate against (the cloud account's, falling back to
 // "us-east-1" for STS-only operations).
 //
 // sessionName is the human-readable name AWS attaches to the assumed
@@ -25,9 +30,8 @@ import (
 // "spacefleet-" so an operator scanning their trail can spot us.
 //
 // The returned credentials live ~1h by default (STS default for
-// AssumeRole). Pulumi's stack runs comfortably within that window;
-// long-running deploys (which we don't have today) would need
-// re-fetching.
+// AssumeRole). Callers that re-use creds across long-running operations
+// should re-fetch.
 func (v *Verifier) AssumeRoleEnv(ctx context.Context, roleARN, externalID, region, sessionName string) (map[string]string, error) {
 	if roleARN == "" {
 		return nil, errors.New("aws assume: role arn required")
@@ -55,9 +59,6 @@ func (v *Verifier) AssumeRoleEnv(ctx context.Context, roleARN, externalID, regio
 		"AWS_SECRET_ACCESS_KEY": creds.SecretAccessKey,
 		"AWS_SESSION_TOKEN":     creds.SessionToken,
 	}
-	// Region: prefer caller's, fall back to the verifier's loaded
-	// region, then us-east-1 (STS-default). Pulumi's AWS provider
-	// requires AWS_REGION to be set.
 	switch {
 	case region != "":
 		env["AWS_REGION"] = region
@@ -69,9 +70,6 @@ func (v *Verifier) AssumeRoleEnv(ctx context.Context, roleARN, externalID, regio
 		env["AWS_REGION"] = "us-east-1"
 		env["AWS_DEFAULT_REGION"] = "us-east-1"
 	}
-	// Force the AWS SDK to ignore any host-side credential profile or
-	// shared-config file that might be set in the worker's env. We
-	// pass full creds + region; nothing else should be consulted.
 	env["AWS_SDK_LOAD_CONFIG"] = "0"
 	return env, nil
 }

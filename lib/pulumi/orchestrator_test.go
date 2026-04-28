@@ -2,37 +2,11 @@ package pulumi
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/auto"
 )
-
-// fakeCreds is a hand-rolled stand-in for lib/aws.Verifier. We hold a
-// hook so individual tests can flip behavior without instantiating
-// real STS plumbing.
-type fakeCreds struct {
-	calls   []fakeCredsCall
-	respond func(roleARN, externalID, region, sessionName string) (map[string]string, error)
-}
-
-type fakeCredsCall struct {
-	RoleARN, ExternalID, Region, SessionName string
-}
-
-func (f *fakeCreds) AssumeRoleEnv(_ context.Context, roleARN, externalID, region, sessionName string) (map[string]string, error) {
-	f.calls = append(f.calls, fakeCredsCall{roleARN, externalID, region, sessionName})
-	if f.respond != nil {
-		return f.respond(roleARN, externalID, region, sessionName)
-	}
-	return map[string]string{
-		"AWS_ACCESS_KEY_ID":     "AKIA",
-		"AWS_SECRET_ACCESS_KEY": "secret",
-		"AWS_SESSION_TOKEN":     "session",
-		"AWS_REGION":            region,
-	}, nil
-}
 
 var goodBackend = BackendConfig{
 	Bucket:    "spacefleet-state",
@@ -41,47 +15,34 @@ var goodBackend = BackendConfig{
 }
 
 func TestNewOrchestratorValidates(t *testing.T) {
-	creds := &fakeCreds{}
-
 	cases := []struct {
 		name    string
 		backend BackendConfig
-		creds   Credentials
 		image   string
 		wantErr string
 	}{
 		{
 			"valid",
 			goodBackend,
-			creds,
 			"ghcr.io/spacefleet/spacefleet-app/builder:v1@sha256:abc",
 			"",
 		},
 		{
 			"bad backend",
 			BackendConfig{Bucket: "b"},
-			creds,
 			"img@sha256:x",
 			"region",
 		},
 		{
-			"nil creds",
-			goodBackend,
-			nil,
-			"img@sha256:x",
-			"credentials provider",
-		},
-		{
 			"empty image",
 			goodBackend,
-			creds,
 			"",
 			"builder image required",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := NewOrchestrator(tc.backend, tc.creds, tc.image)
+			_, err := NewOrchestrator(tc.backend, tc.image)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Errorf("expected no error, got %v", err)
@@ -184,12 +145,12 @@ func TestReadOutputErrors(t *testing.T) {
 	}
 }
 
-// TestUpAppBuildRequiresAppID confirms the orchestrator catches the
-// caller-side mistake of dropping the app id; we shouldn't fall
+// TestUpAppBuildRequiresApp confirms the orchestrator catches the
+// caller-side mistake of dropping app id or slug; we shouldn't fall
 // through to running builder-infra successfully and then fail with
 // something opaque on app-build.
-func TestUpAppBuildRequiresAppID(t *testing.T) {
-	o, err := NewOrchestrator(goodBackend, &fakeCreds{}, "img@sha256:x")
+func TestUpAppBuildRequiresApp(t *testing.T) {
+	o, err := NewOrchestrator(goodBackend, "img@sha256:x")
 	if err != nil {
 		t.Fatalf("NewOrchestrator: %v", err)
 	}
@@ -200,15 +161,28 @@ func TestUpAppBuildRequiresAppID(t *testing.T) {
 		RoleARN:        "arn:aws:iam::111122223333:role/Spacefleet",
 		ExternalID:     "abc123",
 	}
-	_, _, err = o.UpAppBuild(context.Background(), target, "", RunOpts{})
-	if err == nil || !strings.Contains(err.Error(), "appID required") {
-		t.Errorf("expected appID required error, got %v", err)
+	cases := []struct {
+		name string
+		app  AppRef
+		want string
+	}{
+		{"empty", AppRef{}, "app.ID required"},
+		{"no slug", AppRef{ID: "app-uuid"}, "app.Slug required"},
+		{"no id", AppRef{Slug: "api"}, "app.ID required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := o.UpAppBuild(context.Background(), target, tc.app, RunOpts{})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want substring %q", err, tc.want)
+			}
+		})
 	}
 }
 
 // TestDestroyAppBuildRequiresAppID is the destroy-side mirror.
 func TestDestroyAppBuildRequiresAppID(t *testing.T) {
-	o, err := NewOrchestrator(goodBackend, &fakeCreds{}, "img@sha256:x")
+	o, err := NewOrchestrator(goodBackend, "img@sha256:x")
 	if err != nil {
 		t.Fatalf("NewOrchestrator: %v", err)
 	}
@@ -225,43 +199,38 @@ func TestDestroyAppBuildRequiresAppID(t *testing.T) {
 	}
 }
 
-// TestUpBuilderInfraSurfacesAssumeRoleErrors exercises the failure
-// branch where AssumeRole fails (e.g., trust policy denies). We don't
-// want the orchestrator to swallow the cause.
-func TestUpBuilderInfraSurfacesAssumeRoleErrors(t *testing.T) {
-	creds := &fakeCreds{
-		respond: func(string, string, string, string) (map[string]string, error) {
-			return nil, errors.New("AccessDenied: AssumeRole forbidden")
-		},
-	}
-	o, err := NewOrchestrator(goodBackend, creds, "img@sha256:x")
-	if err != nil {
-		t.Fatalf("NewOrchestrator: %v", err)
-	}
+// TestAWSConfigForThreadsTargetFields locks in the mapping from
+// AccountTarget to the AWSConfig the runner sets as Pulumi config —
+// the seam that replaced the old "mint env vars and shove them at
+// Pulumi" path.
+func TestAWSConfigForThreadsTargetFields(t *testing.T) {
 	target := AccountTarget{
 		OrgID:          "org",
-		CloudAccountID: "ca",
+		CloudAccountID: "ca-uuid",
 		AWSAccountID:   "111122223333",
 		RoleARN:        "arn:aws:iam::111122223333:role/Spacefleet",
 		ExternalID:     "abc123",
+		Region:         "eu-west-1",
 	}
-	_, err = o.UpBuilderInfra(context.Background(), target, RunOpts{})
-	if err == nil {
-		t.Fatal("expected error from assume role failure")
+	got := awsConfigFor(target, target.resolvedRegion())
+	if got.Region != "eu-west-1" {
+		t.Errorf("Region = %q, want eu-west-1", got.Region)
 	}
-	if !strings.Contains(err.Error(), "assume role") {
-		t.Errorf("err = %v, want substring 'assume role'", err)
+	if got.RoleARN != target.RoleARN {
+		t.Errorf("RoleARN = %q, want %q", got.RoleARN, target.RoleARN)
 	}
-	if !strings.Contains(err.Error(), "AccessDenied") {
-		t.Errorf("err = %v, want underlying error to be wrapped", err)
+	if got.ExternalID != "abc123" {
+		t.Errorf("ExternalID = %q, want abc123", got.ExternalID)
+	}
+	if !strings.HasPrefix(got.SessionName, "spacefleet-") {
+		t.Errorf("SessionName = %q, want spacefleet- prefix", got.SessionName)
 	}
 }
 
 // TestUpBuilderInfraValidatesTargetEarly confirms target validation
-// fires before any expensive call (AssumeRole, Pulumi spin-up).
+// fires before any expensive call (Pulumi spin-up).
 func TestUpBuilderInfraValidatesTargetEarly(t *testing.T) {
-	creds := &fakeCreds{}
-	o, err := NewOrchestrator(goodBackend, creds, "img@sha256:x")
+	o, err := NewOrchestrator(goodBackend, "img@sha256:x")
 	if err != nil {
 		t.Fatalf("NewOrchestrator: %v", err)
 	}
@@ -269,7 +238,7 @@ func TestUpBuilderInfraValidatesTargetEarly(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error on empty target")
 	}
-	if len(creds.calls) != 0 {
-		t.Errorf("AssumeRole was called despite invalid target: %v", creds.calls)
+	if !strings.Contains(err.Error(), "target.") {
+		t.Errorf("err = %v, want target.* validation error", err)
 	}
 }

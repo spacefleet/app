@@ -576,6 +576,14 @@ export interface components {
             /** Format: date-time */
             last_verified_at?: string | null;
             last_verification_error?: string | null;
+            /**
+             * Format: uri
+             * @description Deep-link to the AWS Console Update Stack wizard with the
+             *     current onboarding template URL pre-filled. Lets a customer
+             *     re-apply the latest permissions policy without re-onboarding.
+             *     Null if the server has no template URL configured.
+             */
+            update_stack_url?: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */

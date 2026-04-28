@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 
@@ -80,7 +81,14 @@ func (s *Server) GetBuildLogs(ctx context.Context, req GetBuildLogsRequestObject
 		BuildID: uuid.UUID(req.BuildId),
 	}
 	if req.Params.After != nil {
-		params.NextToken = *req.Params.After
+		// `after` is the previous response's next_token, which we encode
+		// as a unix-millis timestamp in string form. Garbage-in (an old
+		// session sending a stale CloudWatch token after this code ships)
+		// just falls through to start-from-head — the next response gives
+		// the client a fresh cursor.
+		if v, perr := strconv.ParseInt(*req.Params.After, 10, 64); perr == nil && v > 0 {
+			params.StartTimeMs = v
+		}
 	}
 	if req.Params.Limit != nil {
 		params.Limit = *req.Params.Limit
@@ -108,8 +116,8 @@ func (s *Server) GetBuildLogs(ctx context.Context, req GetBuildLogsRequestObject
 			Message:   e.Message,
 		})
 	}
-	if res.NextToken != "" {
-		v := res.NextToken
+	if res.NextStartTimeMs > 0 {
+		v := strconv.FormatInt(res.NextStartTimeMs, 10)
 		out.NextToken = &v
 	}
 	return out, nil

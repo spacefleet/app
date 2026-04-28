@@ -9,8 +9,10 @@ import (
 func TestInputsValidate(t *testing.T) {
 	good := Inputs{
 		OrgID:            "org",
+		OrgSlug:          "acme",
 		CloudAccountID:   "ca",
 		AppID:            "app-uuid",
+		AppSlug:          "api",
 		Region:           "us-east-1",
 		BuilderImage:     "ghcr.io/spacefleet/spacefleet-app/builder:v1@sha256:abc",
 		ExecutionRoleARN: "arn:aws:iam::111122223333:role/spacefleet-ecs-execution",
@@ -26,8 +28,10 @@ func TestInputsValidate(t *testing.T) {
 		wantErr string
 	}{
 		{"missing org", func(in *Inputs) { in.OrgID = "" }, "OrgID required"},
+		{"missing org slug", func(in *Inputs) { in.OrgSlug = "" }, "OrgSlug required"},
 		{"missing cloud account", func(in *Inputs) { in.CloudAccountID = "" }, "CloudAccountID required"},
 		{"missing app", func(in *Inputs) { in.AppID = "" }, "AppID required"},
+		{"missing app slug", func(in *Inputs) { in.AppSlug = "" }, "AppSlug required"},
 		{"missing region", func(in *Inputs) { in.Region = "" }, "Region required"},
 		{"missing image", func(in *Inputs) { in.BuilderImage = "" }, "BuilderImage required"},
 		{"missing exec role", func(in *Inputs) { in.ExecutionRoleARN = "" }, "ExecutionRoleARN required"},
@@ -45,17 +49,19 @@ func TestInputsValidate(t *testing.T) {
 	}
 }
 
-// TestNameHelpers locks in resource-naming conventions. The IAM
-// policies in the onboarding CFN template grant access to
-// `spacefleet-*` ECR repos and `spacefleet-*` IAM roles; if these
-// names drift the customer's stack runs would 403.
+// TestNameHelpers locks in resource-naming conventions. The onboarding
+// CFN policy scopes ECR perms to repository/spacefleet/* and other
+// per-app perms to spacefleet-*; drift here would surface as opaque
+// AccessDenied during a customer's first build.
 func TestNameHelpers(t *testing.T) {
 	app := "5f8f5d22-1c6e-4b1c-9bbe-c0fd2a9c3a31"
-	if got := EcrRepoName(app); got != "spacefleet-"+app {
-		t.Errorf("EcrRepoName = %q, want spacefleet-%s", got, app)
+	org := "acme"
+	slug := "api"
+	if got := EcrRepoName(org, slug); got != "spacefleet/acme/api" {
+		t.Errorf("EcrRepoName = %q, want spacefleet/acme/api", got)
 	}
-	if got := EcrCacheRepoName(app); got != "spacefleet-"+app+"-cache" {
-		t.Errorf("EcrCacheRepoName = %q, want spacefleet-%s-cache", got, app)
+	if got := EcrCacheRepoName(org, slug); got != "spacefleet/acme/api-cache" {
+		t.Errorf("EcrCacheRepoName = %q, want spacefleet/acme/api-cache", got)
 	}
 	if got := LogGroupName(app); got != "/spacefleet/builds/"+app {
 		t.Errorf("LogGroupName = %q, want /spacefleet/builds/%s", got, app)
@@ -143,6 +149,13 @@ func TestContainerDefinitionsShape(t *testing.T) {
 		if v, ok := opts[k]; !ok || v == "" {
 			t.Errorf("option %q missing or empty", k)
 		}
+	}
+	// Force-flush interval is the difference between "logs land in
+	// CloudWatch within a second" and "logs land when the container
+	// exits" — locking in the value here keeps a future drive-by edit
+	// from silently regressing the live-tail UX.
+	if got := opts["awslogs-force-flush-interval-seconds"]; got != "1" {
+		t.Errorf("awslogs-force-flush-interval-seconds = %v, want \"1\"", got)
 	}
 }
 

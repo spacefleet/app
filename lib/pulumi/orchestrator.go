@@ -20,47 +20,34 @@ import (
 //
 // Orchestrator depends on:
 //   - BackendConfig: Pulumi state backend (s3 + KMS), set once at startup
-//   - Credentials: a [Credentials] producer that knows how to mint
-//     short-lived AWS creds for a customer's role (lib/aws.Verifier
-//     implements this)
 //   - BuilderImage: the digest-pinned builder image, baked into the
 //     binary at release or set via SPACEFLEET_BUILDER_IMAGE for dev
+//
+// Cross-account credentials are not minted here. The orchestrator
+// passes the customer's role ARN + external ID to the runner as Pulumi
+// config; pulumi-aws's default provider does the AssumeRole itself,
+// using the worker's platform creds as the source. The S3 backend
+// (state + KMS) keeps using the worker's default creds — those are the
+// platform-account creds that own the bucket.
 //
 // One Orchestrator per worker / CLI process is fine; methods are safe
 // for concurrent use as long as they target different stacks.
 type Orchestrator struct {
 	backend      BackendConfig
-	creds        Credentials
 	builderImage string
 }
 
-// Credentials is what the orchestrator needs from the AWS layer:
-// "given a role ARN + external ID + region, give me env vars that
-// authenticate as that role." lib/aws.Verifier implements this.
-//
-// Defining the interface here (rather than importing lib/aws directly)
-// keeps lib/pulumi free of AWS SDK imports — only the inline programs
-// in infra/stacks/* pull in pulumi-aws, and only the orchestrator's
-// caller pulls in lib/aws.
-type Credentials interface {
-	AssumeRoleEnv(ctx context.Context, roleARN, externalID, region, sessionName string) (map[string]string, error)
-}
-
 // NewOrchestrator validates inputs once at construction. The backend
-// config is required; the credentials provider is required; the
-// builder image is required (its absence would leak a "didn't pin" bug
-// to a Pulumi error 30s into Up).
-func NewOrchestrator(backend BackendConfig, creds Credentials, builderImage string) (*Orchestrator, error) {
+// config is required; the builder image is required (its absence would
+// leak a "didn't pin" bug to a Pulumi error 30s into Up).
+func NewOrchestrator(backend BackendConfig, builderImage string) (*Orchestrator, error) {
 	if err := backend.Validate(); err != nil {
 		return nil, err
-	}
-	if creds == nil {
-		return nil, errors.New("orchestrator: credentials provider required")
 	}
 	if builderImage == "" {
 		return nil, errors.New("orchestrator: builder image required (set SPACEFLEET_BUILDER_IMAGE or rely on -ldflags default)")
 	}
-	return &Orchestrator{backend: backend, creds: creds, builderImage: builderImage}, nil
+	return &Orchestrator{backend: backend, builderImage: builderImage}, nil
 }
 
 // AccountTarget is what the orchestrator needs to act on a customer's
@@ -135,6 +122,27 @@ type BuilderInfraOutputs struct {
 	LogGroupPrefix   string
 }
 
+// AppRef identifies an app to the orchestrator. ID anchors UUID-named
+// resources (IAM role, log group, secret path, task family); Slug
+// drives the human-readable ECR repo name. Both come from the apps
+// row; the orchestrator stays ent-free so the caller passes them in.
+type AppRef struct {
+	ID   string
+	Slug string
+}
+
+// Validate is the precondition check for AppRef. Lives here rather
+// than on the worker side so the dev CLI gets the same checks.
+func (a AppRef) Validate() error {
+	if a.ID == "" {
+		return errors.New("orchestrator: app.ID required")
+	}
+	if a.Slug == "" {
+		return errors.New("orchestrator: app.Slug required")
+	}
+	return nil
+}
+
 // AppBuildOutputs is the caller-facing return type from UpAppBuild.
 // Names match appbuild's OutputKeys.
 type AppBuildOutputs struct {
@@ -158,11 +166,6 @@ func (o *Orchestrator) UpBuilderInfra(ctx context.Context, t AccountTarget, opts
 	}
 	region := t.resolvedRegion()
 
-	env, err := o.creds.AssumeRoleEnv(ctx, t.RoleARN, t.ExternalID, region, sessionName(t))
-	if err != nil {
-		return BuilderInfraOutputs{}, fmt.Errorf("orchestrator: assume role: %w", err)
-	}
-
 	backend, err := BackendForBuilderInfra(o.backend, t.OrgID, t.CloudAccountID)
 	if err != nil {
 		return BuilderInfraOutputs{}, err
@@ -175,9 +178,9 @@ func (o *Orchestrator) UpBuilderInfra(ctx context.Context, t AccountTarget, opts
 			CloudAccountID: t.CloudAccountID,
 			Region:         region,
 		}),
-		EnvVars: env,
-		Stdout:  opts.Stdout,
-		Stderr:  opts.Stderr,
+		AWSConfig: awsConfigFor(t, region),
+		Stdout:    opts.Stdout,
+		Stderr:    opts.Stderr,
 	})
 	if err != nil {
 		return BuilderInfraOutputs{}, err
@@ -218,12 +221,13 @@ func (o *Orchestrator) UpBuilderInfra(ctx context.Context, t AccountTarget, opts
 // "self-heal on every build" property requires this. If builder-infra
 // is already up the call is a few-second no-op.
 //
-// appID is the Spacefleet app id (uuid string). It's not part of
-// AccountTarget because some orchestrator calls (UpBuilderInfra,
+// app carries both the UUID (for state-path + UUID-named resources)
+// and the slug (for the human-readable ECR repo name). It's separate
+// from AccountTarget because some orchestrator calls (UpBuilderInfra,
 // DestroyBuilderInfra) don't need it.
-func (o *Orchestrator) UpAppBuild(ctx context.Context, t AccountTarget, appID string, opts RunOpts) (BuilderInfraOutputs, AppBuildOutputs, error) {
-	if appID == "" {
-		return BuilderInfraOutputs{}, AppBuildOutputs{}, errors.New("orchestrator: appID required")
+func (o *Orchestrator) UpAppBuild(ctx context.Context, t AccountTarget, app AppRef, opts RunOpts) (BuilderInfraOutputs, AppBuildOutputs, error) {
+	if err := app.Validate(); err != nil {
+		return BuilderInfraOutputs{}, AppBuildOutputs{}, err
 	}
 
 	infraOut, err := o.UpBuilderInfra(ctx, t, opts)
@@ -232,12 +236,8 @@ func (o *Orchestrator) UpAppBuild(ctx context.Context, t AccountTarget, appID st
 	}
 
 	region := t.resolvedRegion()
-	env, err := o.creds.AssumeRoleEnv(ctx, t.RoleARN, t.ExternalID, region, sessionName(t))
-	if err != nil {
-		return infraOut, AppBuildOutputs{}, fmt.Errorf("orchestrator: assume role (app-build): %w", err)
-	}
 
-	backend, err := BackendForAppBuild(o.backend, t.OrgID, appID)
+	backend, err := BackendForAppBuild(o.backend, t.OrgID, app.ID)
 	if err != nil {
 		return infraOut, AppBuildOutputs{}, err
 	}
@@ -246,16 +246,18 @@ func (o *Orchestrator) UpAppBuild(ctx context.Context, t AccountTarget, appID st
 		Backend: backend,
 		Program: appbuild.Program(appbuild.Inputs{
 			OrgID:            t.OrgID,
+			OrgSlug:          t.OrgID,
 			CloudAccountID:   t.CloudAccountID,
-			AppID:            appID,
+			AppID:            app.ID,
+			AppSlug:          app.Slug,
 			Region:           region,
 			BuilderImage:     o.builderImage,
 			ExecutionRoleARN: infraOut.ExecutionRoleARN,
 			AWSAccountID:     t.AWSAccountID,
 		}),
-		EnvVars: env,
-		Stdout:  opts.Stdout,
-		Stderr:  opts.Stderr,
+		AWSConfig: awsConfigFor(t, region),
+		Stdout:    opts.Stdout,
+		Stderr:    opts.Stderr,
 	})
 	if err != nil {
 		return infraOut, AppBuildOutputs{}, err
@@ -266,29 +268,29 @@ func (o *Orchestrator) UpAppBuild(ctx context.Context, t AccountTarget, appID st
 		return infraOut, AppBuildOutputs{}, err
 	}
 
-	app := AppBuildOutputs{}
-	if err := readOutput(res.Outputs, appbuild.OutputECRRepoURI, &app.ECRRepoURI); err != nil {
+	out := AppBuildOutputs{}
+	if err := readOutput(res.Outputs, appbuild.OutputECRRepoURI, &out.ECRRepoURI); err != nil {
 		return infraOut, AppBuildOutputs{}, err
 	}
-	if err := readOutput(res.Outputs, appbuild.OutputECRRepoName, &app.ECRRepoName); err != nil {
+	if err := readOutput(res.Outputs, appbuild.OutputECRRepoName, &out.ECRRepoName); err != nil {
 		return infraOut, AppBuildOutputs{}, err
 	}
-	if err := readOutput(res.Outputs, appbuild.OutputECRCacheRepoURI, &app.ECRCacheRepoURI); err != nil {
+	if err := readOutput(res.Outputs, appbuild.OutputECRCacheRepoURI, &out.ECRCacheRepoURI); err != nil {
 		return infraOut, AppBuildOutputs{}, err
 	}
-	if err := readOutput(res.Outputs, appbuild.OutputECRCacheRepoName, &app.ECRCacheRepoName); err != nil {
+	if err := readOutput(res.Outputs, appbuild.OutputECRCacheRepoName, &out.ECRCacheRepoName); err != nil {
 		return infraOut, AppBuildOutputs{}, err
 	}
-	if err := readOutput(res.Outputs, appbuild.OutputTaskRoleARN, &app.TaskRoleARN); err != nil {
+	if err := readOutput(res.Outputs, appbuild.OutputTaskRoleARN, &out.TaskRoleARN); err != nil {
 		return infraOut, AppBuildOutputs{}, err
 	}
-	if err := readOutput(res.Outputs, appbuild.OutputTaskDefinitionARN, &app.TaskDefinitionARN); err != nil {
+	if err := readOutput(res.Outputs, appbuild.OutputTaskDefinitionARN, &out.TaskDefinitionARN); err != nil {
 		return infraOut, AppBuildOutputs{}, err
 	}
-	if err := readOutput(res.Outputs, appbuild.OutputLogGroupName, &app.LogGroupName); err != nil {
+	if err := readOutput(res.Outputs, appbuild.OutputLogGroupName, &out.LogGroupName); err != nil {
 		return infraOut, AppBuildOutputs{}, err
 	}
-	return infraOut, app, nil
+	return infraOut, out, nil
 }
 
 // DestroyAppBuild tears down a per-app stack. Builder-infra stays —
@@ -303,11 +305,6 @@ func (o *Orchestrator) DestroyAppBuild(ctx context.Context, t AccountTarget, app
 	}
 	region := t.resolvedRegion()
 
-	env, err := o.creds.AssumeRoleEnv(ctx, t.RoleARN, t.ExternalID, region, sessionName(t))
-	if err != nil {
-		return fmt.Errorf("orchestrator: assume role: %w", err)
-	}
-
 	backend, err := BackendForAppBuild(o.backend, t.OrgID, appID)
 	if err != nil {
 		return err
@@ -321,11 +318,11 @@ func (o *Orchestrator) DestroyAppBuild(ctx context.Context, t AccountTarget, app
 	// caller may not have on hand at destroy time (e.g., running
 	// destroy after the cloud-account row has been wiped).
 	runner, err := NewRunner(RunnerConfig{
-		Backend: backend,
-		Program: noopProgram,
-		EnvVars: env,
-		Stdout:  opts.Stdout,
-		Stderr:  opts.Stderr,
+		Backend:   backend,
+		Program:   noopProgram,
+		AWSConfig: awsConfigFor(t, region),
+		Stdout:    opts.Stdout,
+		Stderr:    opts.Stderr,
 	})
 	if err != nil {
 		return err
@@ -347,11 +344,6 @@ func (o *Orchestrator) DestroyBuilderInfra(ctx context.Context, t AccountTarget,
 	}
 	region := t.resolvedRegion()
 
-	env, err := o.creds.AssumeRoleEnv(ctx, t.RoleARN, t.ExternalID, region, sessionName(t))
-	if err != nil {
-		return fmt.Errorf("orchestrator: assume role: %w", err)
-	}
-
 	backend, err := BackendForBuilderInfra(o.backend, t.OrgID, t.CloudAccountID)
 	if err != nil {
 		return err
@@ -362,11 +354,11 @@ func (o *Orchestrator) DestroyBuilderInfra(ctx context.Context, t AccountTarget,
 	// re-running the inline program would be wasted work and would
 	// re-impose the program's input validation.
 	runner, err := NewRunner(RunnerConfig{
-		Backend: backend,
-		Program: noopProgram,
-		EnvVars: env,
-		Stdout:  opts.Stdout,
-		Stderr:  opts.Stderr,
+		Backend:   backend,
+		Program:   noopProgram,
+		AWSConfig: awsConfigFor(t, region),
+		Stdout:    opts.Stdout,
+		Stderr:    opts.Stderr,
 	})
 	if err != nil {
 		return err
@@ -382,6 +374,19 @@ func (o *Orchestrator) DestroyBuilderInfra(ctx context.Context, t AccountTarget,
 // some program when constructing a workspace; the destroy path doesn't
 // invoke it for resource computation.
 var noopProgram Program = func(*pulumi.Context) error { return nil }
+
+// awsConfigFor builds the AWSConfig the runner threads onto the stack
+// as Pulumi config. pulumi-aws's default provider reads these keys and
+// performs the AssumeRole itself using the worker's platform creds —
+// see runner.AWSConfig for why we don't mint env-var creds.
+func awsConfigFor(t AccountTarget, region string) AWSConfig {
+	return AWSConfig{
+		Region:      region,
+		RoleARN:     t.RoleARN,
+		ExternalID:  t.ExternalID,
+		SessionName: sessionName(t),
+	}
+}
 
 // sessionName returns the human-readable AssumeRole session name. Goes
 // into CloudTrail. Keep it short and Spacefleet-prefixed so an

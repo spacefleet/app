@@ -52,8 +52,8 @@ func (c LogsConfig) Validate() error {
 }
 
 // LogsController serves one build-logs page per Fetch call. Stateless:
-// pagination is driven by the caller passing CloudWatch's NextToken
-// back on each call.
+// pagination is driven by the caller passing the previous response's
+// NextStartTimeMs back on each call.
 type LogsController struct {
 	cfg LogsConfig
 }
@@ -70,22 +70,22 @@ func NewLogsController(cfg LogsConfig) (*LogsController, error) {
 }
 
 // FetchParams is the input to Fetch. OrgSlug+AppSlug+BuildID identify
-// the build; NextToken/Limit are the pagination knobs.
+// the build; StartTimeMs/Limit are the pagination knobs.
 type FetchParams struct {
-	OrgSlug   string
-	AppSlug   string
-	BuildID   uuid.UUID
-	NextToken string
-	Limit     int32 // 0 = use default
+	OrgSlug     string
+	AppSlug     string
+	BuildID     uuid.UUID
+	StartTimeMs int64 // unix-millis cursor; 0 = start from head
+	Limit       int32 // 0 = use default
 }
 
-// FetchResult is the API-layer-friendly shape: events + next token +
+// FetchResult is the API-layer-friendly shape: events + next cursor +
 // flag. We carry the build's terminal status here too so the UI can
 // stop polling once the build is done *and* the stream is drained.
 type FetchResult struct {
-	Events    []awsint.LogEvent
-	NextToken string
-	HasMore   bool
+	Events          []awsint.LogEvent
+	NextStartTimeMs int64
+	HasMore         bool
 
 	// BuildTerminal is true when the build's row says succeeded/failed.
 	// Combined with HasMore=false, this is the signal the UI uses to
@@ -102,9 +102,9 @@ type FetchResult struct {
 //  3. Assumes the customer's integration role and pulls one page of
 //     events from CloudWatch.
 //
-// The returned FetchResult.NextToken is the CloudWatch NextForwardToken
-// — opaque, round-trip it back on the next call. HasMore is the
-// difference between the returned token and the token we passed in.
+// The returned FetchResult.NextStartTimeMs is the highest event
+// timestamp observed (or the caller's input when no events came
+// back). Pass it back as StartTimeMs on the next call.
 func (l *LogsController) Fetch(ctx context.Context, p FetchParams) (FetchResult, error) {
 	if p.OrgSlug == "" || p.AppSlug == "" {
 		return FetchResult{}, errors.New("logs: org and app required")
@@ -158,7 +158,7 @@ func (l *LogsController) Fetch(ctx context.Context, p FetchParams) (FetchResult,
 	page, err := awsint.GetBuildLogEvents(ctx, client, awsint.GetBuildLogEventsParams{
 		LogGroupName:  build.LogGroup,
 		LogStreamName: build.LogStream,
-		NextToken:     p.NextToken,
+		StartTimeMs:   p.StartTimeMs,
 		Limit:         limit,
 	})
 	if err != nil {
@@ -166,10 +166,10 @@ func (l *LogsController) Fetch(ctx context.Context, p FetchParams) (FetchResult,
 	}
 
 	return FetchResult{
-		Events:        page.Events,
-		NextToken:     page.NextToken,
-		HasMore:       page.HasMore,
-		BuildTerminal: terminal,
+		Events:          page.Events,
+		NextStartTimeMs: page.NextStartTimeMs,
+		HasMore:         page.HasMore,
+		BuildTerminal:   terminal,
 	}, nil
 }
 

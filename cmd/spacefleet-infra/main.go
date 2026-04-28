@@ -34,7 +34,6 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/spacefleet/app/ent"
-	libaws "github.com/spacefleet/app/lib/aws"
 	"github.com/spacefleet/app/lib/config"
 	"github.com/spacefleet/app/lib/db"
 	libpulumi "github.com/spacefleet/app/lib/pulumi"
@@ -113,11 +112,16 @@ func runUp(args []string) {
 		return
 	}
 
-	if _, err := uuid.Parse(*app); err != nil {
+	appID, err := uuid.Parse(*app)
+	if err != nil {
 		log.Fatalf("spacefleet-infra: --app must be a uuid: %v", err)
 	}
+	row, err := deps.entCli.App.Get(ctx, appID)
+	if err != nil {
+		log.Fatalf("spacefleet-infra: load app %s: %v", appID, err)
+	}
 
-	infra, appOut, err := deps.orch.UpAppBuild(ctx, target, *app, opts)
+	infra, appOut, err := deps.orch.UpAppBuild(ctx, target, libpulumi.AppRef{ID: row.ID.String(), Slug: row.Slug}, opts)
 	if err != nil {
 		log.Fatalf("spacefleet-infra up app-build: %v", err)
 	}
@@ -213,17 +217,11 @@ func setup(ctx context.Context) (*deps, error) {
 		return nil, err
 	}
 
-	verifier, err := libaws.NewVerifier(ctx, cfg.AWSPlatformAccountID)
-	if err != nil {
-		_ = sqlDB.Close()
-		return nil, fmt.Errorf("aws verifier: %w", err)
-	}
-
 	orch, err := libpulumi.NewOrchestrator(libpulumi.BackendConfig{
 		Bucket:    cfg.StateBucket,
 		Region:    cfg.StateBucketRegion,
 		KMSKeyARN: cfg.StateKMSKeyARN,
-	}, verifier, cfg.BuilderImage)
+	}, cfg.BuilderImage)
 	if err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("orchestrator: %w", err)

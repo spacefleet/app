@@ -63,10 +63,18 @@ const (
 // Inputs are everything the program needs. The cluster/subnet/SG/exec
 // role come from builder-infra; the builder image is the
 // digest-pinned reference baked into the binary at release.
+//
+// OrgSlug + AppSlug drive the human-readable ECR repo name
+// ("spacefleet/<org-slug>/<app-slug>") that shows up in the AWS console.
+// AppID still anchors UUID-named resources (IAM role, task family, log
+// group, secret path) where slashes aren't allowed or where stability
+// across a future slug rename matters more than readability.
 type Inputs struct {
 	OrgID          string
+	OrgSlug        string
 	CloudAccountID string
 	AppID          string
+	AppSlug        string
 	Region         string
 
 	// BuilderImage is the digest-pinned image reference Fargate pulls.
@@ -94,11 +102,17 @@ func (in Inputs) Validate() error {
 	if in.OrgID == "" {
 		return errors.New("appbuild: OrgID required")
 	}
+	if in.OrgSlug == "" {
+		return errors.New("appbuild: OrgSlug required")
+	}
 	if in.CloudAccountID == "" {
 		return errors.New("appbuild: CloudAccountID required")
 	}
 	if in.AppID == "" {
 		return errors.New("appbuild: AppID required")
+	}
+	if in.AppSlug == "" {
+		return errors.New("appbuild: AppSlug required")
 	}
 	if in.Region == "" {
 		return errors.New("appbuild: Region required")
@@ -115,19 +129,24 @@ func (in Inputs) Validate() error {
 	return nil
 }
 
-// EcrRepoName returns the per-app ECR repo name. Public — the
-// orchestrator and the dispatcher (phase 5) need to compute this for
-// containerOverrides without round-tripping through Pulumi outputs.
-func EcrRepoName(appID string) string {
-	return "spacefleet-" + appID
+// EcrRepoName returns the per-app ECR repo name. ECR allows slashes,
+// which the AWS console renders as a folder tree — so an operator
+// browsing ECR sees "spacefleet/<org>/<app>" instead of an opaque
+// "spacefleet-<uuid>". Slug is captured at app-create time and treated
+// as immutable (BUILD_PIPELINE.md: no rename in v1); a future rename
+// flow will need to either freeze the original slug for ECR or
+// re-create the repo on cutover.
+func EcrRepoName(orgSlug, appSlug string) string {
+	return "spacefleet/" + orgSlug + "/" + appSlug
 }
 
 // EcrCacheRepoName returns the per-app cache repo name (same prefix +
 // "-cache"). Kaniko writes layer cache here; we keep it in a separate
 // repo rather than mixing tags so a `force_delete` of either doesn't
-// surprise the operator.
-func EcrCacheRepoName(appID string) string {
-	return "spacefleet-" + appID + "-cache"
+// surprise the operator. Console layout: it sits alongside the main
+// repo under the org's namespace.
+func EcrCacheRepoName(orgSlug, appSlug string) string {
+	return "spacefleet/" + orgSlug + "/" + appSlug + "-cache"
 }
 
 // LogGroupName returns the per-app CloudWatch log group. Path matches
@@ -162,7 +181,7 @@ func Program(in Inputs) func(*pulumi.Context) error {
 		tags := commonTags(in)
 
 		repo, err := ecr.NewRepository(ctx, "ecr-repo", &ecr.RepositoryArgs{
-			Name:               pulumi.String(EcrRepoName(in.AppID)),
+			Name:               pulumi.String(EcrRepoName(in.OrgSlug, in.AppSlug)),
 			ImageTagMutability: pulumi.String("MUTABLE"),
 			ForceDelete:        pulumi.Bool(true),
 			Tags:               tags,
@@ -172,7 +191,7 @@ func Program(in Inputs) func(*pulumi.Context) error {
 		}
 
 		cacheRepo, err := ecr.NewRepository(ctx, "ecr-cache-repo", &ecr.RepositoryArgs{
-			Name:               pulumi.String(EcrCacheRepoName(in.AppID)),
+			Name:               pulumi.String(EcrCacheRepoName(in.OrgSlug, in.AppSlug)),
 			ImageTagMutability: pulumi.String("MUTABLE"),
 			ForceDelete:        pulumi.Bool(true),
 			Tags:               tags,
@@ -343,6 +362,12 @@ func containerDefinitionsJSON(image, region, logGroupName string) (string, error
 					"awslogs-group":         logGroupName,
 					"awslogs-region":        region,
 					"awslogs-stream-prefix": "builder",
+					// Force the awslogs driver to flush every second instead
+					// of batching opportunistically. Without this, kaniko's
+					// chatty stdout sits in the driver buffer for the full
+					// 2-3 minute build and only lands in CloudWatch when the
+					// container exits — making the live-tail UI useless.
+					"awslogs-force-flush-interval-seconds": "1",
 				},
 			},
 		},

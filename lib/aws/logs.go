@@ -36,43 +36,54 @@ type LogEvent struct {
 	Message   string `json:"message"`
 }
 
-// GetBuildLogEventsParams is the input shape. NextToken is opaque to us:
-// CloudWatch returns one and we round-trip it back on the next call.
+// GetBuildLogEventsParams is the input shape. StartTimeMs is the
+// "after" cursor in unix-millis: 0 means "from the head of the stream";
+// non-zero means "events with timestamp strictly greater than this."
 //
-// StartFromHead=true asks CloudWatch for the *oldest* events first when
-// no NextToken is given. That's what we want for a build log — the user
-// wants to see the build from the start, not the end. Once a token is
-// in play, StartFromHead is ignored by the API.
+// We deliberately do *not* use CloudWatch's NextForwardToken across
+// calls. In practice that token does not reliably advance to pick up
+// newly-written events while a builder is actively producing logs —
+// the symptom we hit was an empty page returned for the entire 2-3
+// minute Kaniko run, then everything flooding in once the container
+// exited. Timestamp-based pagination sidesteps that quirk: each poll
+// asks CloudWatch directly for events past the highest timestamp the
+// caller has seen, and CloudWatch reads from its index instead of
+// chasing a stale token.
 type GetBuildLogEventsParams struct {
 	LogGroupName  string
 	LogStreamName string
-	NextToken     string
-	Limit         int32 // 0 means "use CloudWatch default" (10,000 events / 1MB)
+
+	// StartTimeMs is the unix-milliseconds floor (exclusive) for the
+	// next batch. Pass back the previous response's NextStartTimeMs.
+	// 0 starts from the head of the stream.
+	StartTimeMs int64
+
+	// Limit caps events per call. 0 falls back to CloudWatch's default
+	// (10,000 events / 1MB).
+	Limit int32
 }
 
-// GetBuildLogEventsResult bundles a page of events with the pagination
-// state. HasMore reflects whether NextForwardToken differs from the one
-// the caller passed in — CloudWatch returns the same token on a tail
-// page, which is how the consumer knows to stop polling.
+// GetBuildLogEventsResult is one page of events plus the cursor to
+// resume from. NextStartTimeMs is the highest timestamp we observed
+// (or the caller's input when no events came back) — the caller round-
+// trips it on the next call. HasMore is a hint that the page was
+// saturated and more events are likely available right now, so the
+// caller can poll faster instead of backing off.
 type GetBuildLogEventsResult struct {
-	Events    []LogEvent
-	NextToken string
-	HasMore   bool
+	Events          []LogEvent
+	NextStartTimeMs int64
+	HasMore         bool
 }
 
-// GetBuildLogEvents pulls one page of log events. Wraps
-// CloudWatchLogs.GetLogEvents and unwraps to the LogEvent shape.
+// GetBuildLogEvents pulls one page of log events using a timestamp
+// cursor. Always asks CloudWatch with StartFromHead=true so events
+// arrive in chronological order; bounds the lower edge with startTime
+// when the caller has a non-zero cursor.
 //
-// Behavior we need to be deliberate about:
-//
-//   - The first call has no NextToken. We pass StartFromHead=true so we
-//     get the oldest events. (Without it, CloudWatch returns the tail.)
-//   - A subsequent call passes the previous NextToken. CloudWatch keeps
-//     returning the same NextForwardToken once we hit the end of the
-//     stream, so callers detect "no new events" by comparing tokens.
-//   - ResourceNotFoundException is treated as "stream not yet visible"
-//     and reported as an empty result with no token; that's the normal
-//     state between RunTask and the first builder log line.
+// ResourceNotFoundException is treated as "stream not yet visible" —
+// the normal state between RunTask and the first builder log line —
+// and reported as an empty page that preserves the caller's cursor so
+// the next poll picks up exactly where they left off.
 func GetBuildLogEvents(ctx context.Context, c LogsClient, p GetBuildLogEventsParams) (GetBuildLogEventsResult, error) {
 	if c == nil {
 		return GetBuildLogEventsResult{}, errors.New("aws: nil logs client")
@@ -84,32 +95,31 @@ func GetBuildLogEvents(ctx context.Context, c LogsClient, p GetBuildLogEventsPar
 	in := &cloudwatchlogs.GetLogEventsInput{
 		LogGroupName:  awssdk.String(p.LogGroupName),
 		LogStreamName: awssdk.String(p.LogStreamName),
+		StartFromHead: awssdk.Bool(true),
 	}
 	if p.Limit > 0 {
 		in.Limit = awssdk.Int32(p.Limit)
 	}
-	if p.NextToken == "" {
-		// Oldest events first. The token-driven follow-up calls inherit
-		// direction from the token itself, so we only set this on the
-		// first page.
-		in.StartFromHead = awssdk.Bool(true)
-	} else {
-		in.NextToken = awssdk.String(p.NextToken)
+	if p.StartTimeMs > 0 {
+		// CloudWatch's startTime is inclusive. We already returned the
+		// event at exactly StartTimeMs on the previous poll, so bump by
+		// one to avoid duplicating it. Loses any events that arrived in
+		// the same millisecond as the previous batch's tail — acceptable
+		// for human-readable build logs where lines are tens of ms apart.
+		in.StartTime = awssdk.Int64(p.StartTimeMs + 1)
 	}
 
 	out, err := c.GetLogEvents(ctx, in)
 	if err != nil {
-		// A missing stream is the common "task hasn't logged yet" case;
-		// treat as empty rather than surfacing the error and forcing
-		// every caller to handle it.
 		var nf *cwltypes.ResourceNotFoundException
 		if errors.As(err, &nf) {
-			return GetBuildLogEventsResult{}, nil
+			return GetBuildLogEventsResult{NextStartTimeMs: p.StartTimeMs}, nil
 		}
 		return GetBuildLogEventsResult{}, fmt.Errorf("aws: get log events: %w", err)
 	}
 
 	events := make([]LogEvent, 0, len(out.Events))
+	maxTs := p.StartTimeMs
 	for _, e := range out.Events {
 		var ts int64
 		if e.Timestamp != nil {
@@ -120,18 +130,22 @@ func GetBuildLogEvents(ctx context.Context, c LogsClient, p GetBuildLogEventsPar
 			msg = *e.Message
 		}
 		events = append(events, LogEvent{Timestamp: ts, Message: msg})
+		if ts > maxTs {
+			maxTs = ts
+		}
 	}
 
-	next := strDeref(out.NextForwardToken)
-	// CloudWatch returns the *same* NextForwardToken once the caller has
-	// consumed every event. Comparing to the caller's previous token is
-	// how we surface "stream is fully drained" without an extra round-
-	// trip.
-	hasMore := next != "" && next != p.NextToken
+	// HasMore = "the page was saturated, there's likely more right now."
+	// The caller polls fast in that case and backs off on a partial page.
+	limit := p.Limit
+	if limit <= 0 {
+		limit = 10000
+	}
+	hasMore := int32(len(events)) >= limit
 
 	return GetBuildLogEventsResult{
-		Events:    events,
-		NextToken: next,
-		HasMore:   hasMore,
+		Events:          events,
+		NextStartTimeMs: maxTs,
+		HasMore:         hasMore,
 	}, nil
 }

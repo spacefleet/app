@@ -246,10 +246,29 @@ const LOGS_POLL_INTERVAL_MS = 2000;
 // avoids hammering the API for zero-event responses.
 const LOGS_IDLE_INTERVAL_MS = 5000;
 
+// LOGS_ERROR_MAX_BACKOFF_MS caps the exponential backoff after a poll
+// failure. A long build can outlive a short STS or CloudWatch hiccup,
+// so we want to keep retrying — just not in a tight loop.
+const LOGS_ERROR_MAX_BACKOFF_MS = 30000;
+
+// LOGS_TERMINAL_GRACE_MS is how long we keep polling after the build
+// flips to a terminal status. The Fargate awslogs driver can take a
+// while to flush its tail to CloudWatch *after* the container exits —
+// if we stop polling the instant build_terminal flips true we miss
+// those final lines until a hard refresh. Each new event seen during
+// the grace window resets it, so a build that's still flushing keeps
+// the panel alive until it's actually quiet.
+const LOGS_TERMINAL_GRACE_MS = 60000;
+
 // LogsPanel polls the logs endpoint, accumulates events, and renders
 // them in a terminal-styled, monospaced panel. Polling stops once the
 // server reports `build_terminal=true` *and* `has_more=false` — that's
 // the moment we know no further events will appear.
+//
+// Transient errors (auth refresh, STS rate limit, CW Logs blip) are
+// retried with exponential backoff rather than halting the loop. A
+// single failed poll used to leave the panel stuck on "Waiting for the
+// builder…" for the rest of the build, which is what the user saw.
 function LogsPanel({
   orgSlug,
   appSlug,
@@ -262,7 +281,7 @@ function LogsPanel({
   buildStatus: string;
 }) {
   const [events, setEvents] = useState<LogEvent[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [transientError, setTransientError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const tokenRef = useRef<string | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -271,6 +290,12 @@ function LogsPanel({
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
+    let errorBackoff = LOGS_POLL_INTERVAL_MS;
+    // graceDeadline is set the first time we see build_terminal=true.
+    // Each subsequent page that contains events pushes the deadline
+    // back. We only call setDone() once the deadline has passed *and*
+    // the latest page reported has_more=false.
+    let graceDeadline: number | undefined;
 
     async function load() {
       const { data, error } = await api.GET(
@@ -286,9 +311,19 @@ function LogsPanel({
       );
       if (cancelled) return;
       if (error || !data) {
-        setError(extractMessage(error) ?? "Failed to load logs");
+        // Don't halt the loop — a transient AWS hiccup or token refresh
+        // would otherwise leave the panel frozen for the rest of the
+        // build. Schedule another attempt with exponential backoff and
+        // surface the failure as a non-blocking notice.
+        setTransientError(extractMessage(error) ?? "Failed to load logs");
+        timer = window.setTimeout(load, errorBackoff);
+        errorBackoff = Math.min(errorBackoff * 2, LOGS_ERROR_MAX_BACKOFF_MS);
         return;
       }
+      // Successful poll: reset the backoff and clear any prior banner.
+      errorBackoff = LOGS_POLL_INTERVAL_MS;
+      setTransientError(null);
+
       // Append the new page's events. We don't dedupe — the API is
       // append-only via the next_token cursor, so a page never overlaps
       // with what we've already shown.
@@ -297,10 +332,23 @@ function LogsPanel({
       }
       tokenRef.current = data.next_token ?? tokenRef.current;
 
-      const isTerminal = data.build_terminal && !data.has_more;
-      if (isTerminal) {
-        setDone(true);
-        return;
+      if (data.build_terminal) {
+        const now = Date.now();
+        if (graceDeadline === undefined) {
+          // First time we've seen the build flip to terminal — start
+          // the grace window.
+          graceDeadline = now + LOGS_TERMINAL_GRACE_MS;
+        } else if (data.events.length > 0) {
+          // Logs are still arriving after container exit (awslogs is
+          // draining its buffer). Extend the window so we keep polling
+          // as long as we're seeing fresh events.
+          graceDeadline = now + LOGS_TERMINAL_GRACE_MS;
+        }
+        const expired = now >= graceDeadline;
+        if (expired && !data.has_more) {
+          setDone(true);
+          return;
+        }
       }
       const delay = data.has_more
         ? LOGS_POLL_INTERVAL_MS
@@ -336,14 +384,6 @@ function LogsPanel({
     pinToBottomRef.current = nearBottom;
   }
 
-  if (error) {
-    return (
-      <p className="mt-3 bg-red-50 p-3 font-mono text-sm text-red-700">
-        {error}
-      </p>
-    );
-  }
-
   return (
     <div className="mt-3">
       <div
@@ -363,6 +403,11 @@ function LogsPanel({
           ))
         )}
       </div>
+      {transientError && !done && (
+        <p className="mt-2 bg-amber-50 px-3 py-2 font-mono text-xs text-amber-800">
+          {transientError} · retrying…
+        </p>
+      )}
       <p className="mt-2 text-xs text-gray-500">
         {done
           ? `Stream closed · ${events.length} line${events.length === 1 ? "" : "s"}`

@@ -144,8 +144,9 @@ Resources:
               - ecs:PutClusterCapacityProviders
             Resource: '*'
 
-          # ECR repos for built images. Names are pinned to
-          # `spacefleet-<app-id>` and `spacefleet-<app-id>-cache`.
+          # ECR repos for built images. Names are namespaced under
+          # `spacefleet/<org-slug>/<app-slug>` (and `<app-slug>-cache`)
+          # so the AWS console renders them as a folder tree per org.
           - Sid: BuilderECR
             Effect: Allow
             Action:
@@ -160,7 +161,7 @@ Resources:
               - ecr:PutLifecyclePolicy
               - ecr:DeleteLifecyclePolicy
             Resource:
-              - !Sub 'arn:aws:ecr:*:${AWS::AccountId}:repository/spacefleet-*'
+              - !Sub 'arn:aws:ecr:*:${AWS::AccountId}:repository/spacefleet/*'
 
           # CloudWatch Logs under the build namespace.
           - Sid: BuilderLogs

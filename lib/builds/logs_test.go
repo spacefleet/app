@@ -98,7 +98,6 @@ func TestLogsController_HappyPath(t *testing.T) {
 				{Timestamp: awssdk.Int64(1700000000000), Message: awssdk.String("starting kaniko")},
 				{Timestamp: awssdk.Int64(1700000001000), Message: awssdk.String("building stage 1/3")},
 			},
-			NextForwardToken: awssdk.String("f/abc"),
 		},
 	}
 	ctrl := newLogsControllerForTest(t, client, fc)
@@ -121,10 +120,10 @@ func TestLogsController_HappyPath(t *testing.T) {
 		t.Errorf("log stream = %q want %q", got, build.LogStream)
 	}
 	if fc.in.StartFromHead == nil || !*fc.in.StartFromHead {
-		t.Error("expected StartFromHead=true for first page")
+		t.Error("expected StartFromHead=true on every page (chronological order)")
 	}
-	if fc.in.NextToken != nil {
-		t.Errorf("expected no NextToken on first page, got %v", *fc.in.NextToken)
+	if fc.in.StartTime != nil {
+		t.Errorf("expected no StartTime on first page, got %v", *fc.in.StartTime)
 	}
 	if got := awssdk.ToInt32(fc.in.Limit); got != DefaultLogsLimit {
 		t.Errorf("limit = %d want default %d", got, DefaultLogsLimit)
@@ -135,45 +134,44 @@ func TestLogsController_HappyPath(t *testing.T) {
 	if res.Events[0].Message != "starting kaniko" {
 		t.Errorf("event 0 = %+v", res.Events[0])
 	}
-	if res.NextToken != "f/abc" {
-		t.Errorf("token = %q", res.NextToken)
+	if res.NextStartTimeMs != 1700000001000 {
+		t.Errorf("next cursor = %d want 1700000001000 (max event timestamp)", res.NextStartTimeMs)
 	}
-	if !res.HasMore {
-		t.Error("expected HasMore=true on first page")
+	if res.HasMore {
+		t.Error("HasMore=false: 2 events is far below the default limit")
 	}
 	if res.BuildTerminal {
 		t.Error("BuildTerminal should be false for running build")
 	}
 }
 
-func TestLogsController_ThreadsNextToken(t *testing.T) {
+func TestLogsController_ThreadsStartTime(t *testing.T) {
 	client, fix := connectedLogsFixture(t)
 	build := dispatchedBuild(t, client, fix, BuildStatusRunning)
 
-	fc := &fakeLogsClient{
-		out: &cloudwatchlogs.GetLogEventsOutput{
-			NextForwardToken: awssdk.String("f/same"),
-		},
-	}
+	fc := &fakeLogsClient{out: &cloudwatchlogs.GetLogEventsOutput{}}
 	ctrl := newLogsControllerForTest(t, client, fc)
 
 	res, err := ctrl.Fetch(context.Background(), FetchParams{
-		OrgSlug:   "acme",
-		AppSlug:   "app",
-		BuildID:   build.ID,
-		NextToken: "f/same",
+		OrgSlug:     "acme",
+		AppSlug:     "app",
+		BuildID:     build.ID,
+		StartTimeMs: 1700000005000,
 	})
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	if fc.in.NextToken == nil || *fc.in.NextToken != "f/same" {
-		t.Errorf("NextToken not threaded: %v", fc.in.NextToken)
+	if fc.in.StartTime == nil || *fc.in.StartTime != 1700000005001 {
+		t.Errorf("StartTime not threaded (with +1 bump): %v", fc.in.StartTime)
 	}
-	if fc.in.StartFromHead != nil {
-		t.Error("StartFromHead must not be set when paging forward")
+	if fc.in.StartFromHead == nil || !*fc.in.StartFromHead {
+		t.Error("StartFromHead must stay true even when paging forward by time")
 	}
 	if res.HasMore {
-		t.Error("expected HasMore=false on tail page (token unchanged)")
+		t.Error("expected HasMore=false on empty page")
+	}
+	if res.NextStartTimeMs != 1700000005000 {
+		t.Errorf("cursor should round-trip on empty page: %d", res.NextStartTimeMs)
 	}
 }
 
@@ -208,7 +206,7 @@ func TestLogsController_PreDispatchReturnsEmpty(t *testing.T) {
 	if fc.in != nil {
 		t.Error("expected no CloudWatch call for pre-dispatch build")
 	}
-	if len(res.Events) != 0 || res.NextToken != "" || res.HasMore {
+	if len(res.Events) != 0 || res.NextStartTimeMs != 0 || res.HasMore {
 		t.Errorf("expected empty result, got %+v", res)
 	}
 	if res.BuildTerminal {
@@ -220,18 +218,14 @@ func TestLogsController_TerminalBuildReportsBuildTerminal(t *testing.T) {
 	client, fix := connectedLogsFixture(t)
 	build := dispatchedBuild(t, client, fix, BuildStatusSucceeded)
 
-	fc := &fakeLogsClient{
-		out: &cloudwatchlogs.GetLogEventsOutput{
-			NextForwardToken: awssdk.String("f/end"),
-		},
-	}
+	fc := &fakeLogsClient{out: &cloudwatchlogs.GetLogEventsOutput{}}
 	ctrl := newLogsControllerForTest(t, client, fc)
 
 	res, err := ctrl.Fetch(context.Background(), FetchParams{
-		OrgSlug:   "acme",
-		AppSlug:   "app",
-		BuildID:   build.ID,
-		NextToken: "f/end",
+		OrgSlug:     "acme",
+		AppSlug:     "app",
+		BuildID:     build.ID,
+		StartTimeMs: 1700000010000,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +234,10 @@ func TestLogsController_TerminalBuildReportsBuildTerminal(t *testing.T) {
 		t.Error("expected BuildTerminal=true for succeeded build")
 	}
 	if res.HasMore {
-		t.Error("expected HasMore=false (token unchanged)")
+		t.Error("expected HasMore=false on empty drained page")
+	}
+	if res.NextStartTimeMs != 1700000010000 {
+		t.Errorf("cursor should round-trip on terminal+empty page: %d", res.NextStartTimeMs)
 	}
 }
 

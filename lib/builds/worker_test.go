@@ -32,7 +32,7 @@ type fakeOrchestrator struct {
 	upCalls  int
 }
 
-func (f *fakeOrchestrator) UpAppBuild(_ context.Context, _ pulumi.AccountTarget, _ string, _ pulumi.RunOpts) (pulumi.BuilderInfraOutputs, pulumi.AppBuildOutputs, error) {
+func (f *fakeOrchestrator) UpAppBuild(_ context.Context, _ pulumi.AccountTarget, _ pulumi.AppRef, _ pulumi.RunOpts) (pulumi.BuilderInfraOutputs, pulumi.AppBuildOutputs, error) {
 	f.upCalls++
 	if f.upErr != nil {
 		return pulumi.BuilderInfraOutputs{}, pulumi.AppBuildOutputs{}, f.upErr

@@ -53,6 +53,18 @@ func NewService(entClient *ent.Client, verifier *Verifier, platformAccount, temp
 // to the UI so the connect flow can show "you're trusting account X".
 func (s *Service) PlatformAccount() string { return s.platformAccount }
 
+// UpdateStackURL builds the deep-link to the customer's stack-update
+// wizard with our current template URL pre-filled. Stack name follows
+// the same scheme Start uses ("spacefleet-<label>"), so any account
+// onboarded through Spacefleet is reachable.
+func (s *Service) UpdateStackURL(row *ent.CloudAccount) (string, error) {
+	return UpdateStackURL(UpdateStackParams{
+		TemplateURL: s.templateURL,
+		StackName:   "spacefleet-" + row.Label,
+		Region:      row.Region,
+	})
+}
+
 // StartParams names the new cloud account being created. Region is
 // optional; only used to pin the Quick Create URL to a specific console
 // region.

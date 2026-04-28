@@ -56,7 +56,7 @@ type CredentialIssuer interface {
 // Orchestrator is the subset of *pulumi.Orchestrator we use here.
 // Defining it as an interface lets us swap a stub in worker tests.
 type Orchestrator interface {
-	UpAppBuild(ctx context.Context, t pulumi.AccountTarget, appID string, opts pulumi.RunOpts) (pulumi.BuilderInfraOutputs, pulumi.AppBuildOutputs, error)
+	UpAppBuild(ctx context.Context, t pulumi.AccountTarget, app pulumi.AppRef, opts pulumi.RunOpts) (pulumi.BuilderInfraOutputs, pulumi.AppBuildOutputs, error)
 	DestroyAppBuild(ctx context.Context, t pulumi.AccountTarget, appID string, opts pulumi.RunOpts) error
 }
 
@@ -291,7 +291,7 @@ func (w *Worker) runDispatch(ctx context.Context, buildID uuid.UUID) error {
 	if err := w.appendStageOrLog(ctx, buildID, StageRunning(StageReconcile)); err != nil {
 		return err
 	}
-	infraOut, appOut, err := w.cfg.Orchestrator.UpAppBuild(ctx, target, app.ID.String(), pulumi.RunOpts{
+	infraOut, appOut, err := w.cfg.Orchestrator.UpAppBuild(ctx, target, pulumi.AppRef{ID: app.ID.String(), Slug: app.Slug}, pulumi.RunOpts{
 		Stdout: w.cfg.Stdout,
 		Stderr: w.cfg.Stderr,
 	})
