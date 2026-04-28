@@ -150,12 +150,12 @@ func TestContainerDefinitionsShape(t *testing.T) {
 			t.Errorf("option %q missing or empty", k)
 		}
 	}
-	// Force-flush interval is the difference between "logs land in
-	// CloudWatch within a second" and "logs land when the container
-	// exits" — locking in the value here keeps a future drive-by edit
-	// from silently regressing the live-tail UX.
-	if got := opts["awslogs-force-flush-interval-seconds"]; got != "1" {
-		t.Errorf("awslogs-force-flush-interval-seconds = %v, want \"1\"", got)
+	// Tripwire: Fargate rejects awslogs-force-flush-interval-seconds at
+	// RegisterTaskDefinition time (it's EC2-launch-type only). Locking
+	// the absence in here so a future drive-by re-add fails fast in
+	// tests instead of mid-deploy.
+	if _, present := opts["awslogs-force-flush-interval-seconds"]; present {
+		t.Error("awslogs-force-flush-interval-seconds is rejected by Fargate; do not set it")
 	}
 }
 

@@ -362,12 +362,12 @@ func containerDefinitionsJSON(image, region, logGroupName string) (string, error
 					"awslogs-group":         logGroupName,
 					"awslogs-region":        region,
 					"awslogs-stream-prefix": "builder",
-					// Force the awslogs driver to flush every second instead
-					// of batching opportunistically. Without this, kaniko's
-					// chatty stdout sits in the driver buffer for the full
-					// 2-3 minute build and only lands in CloudWatch when the
-					// container exits — making the live-tail UI useless.
-					"awslogs-force-flush-interval-seconds": "1",
+					// NB: awslogs-force-flush-interval-seconds is *not*
+					// available on Fargate (EC2 launch-type only). The
+					// Fargate awslogs driver uses its built-in 5-second
+					// default; if we ever need sub-5s live-tail latency
+					// we'd need to switch to FireLens / FluentBit as a
+					// sidecar, which is a bigger change.
 				},
 			},
 		},
